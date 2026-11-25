@@ -70,10 +70,13 @@ jobs:
             engine/bin/engine.exe
             engine/go.mod
             engine/go.sum
-      - uses: actions/upload-artifact@v4
-        with:
-          name: engine-linux
-          path: /tmp/engine-linux
+      - name: Publish Linux test build to the ci-bin branch
+        if: github.ref == 'refs/heads/engine'
+        run: |
+          rm -rf /tmp/cibin && mkdir /tmp/cibin && cd /tmp/cibin
+          gzip -c /tmp/engine-linux > engine-linux.gz
+          git init -q -b ci-bin && git add . && git -c user.name=ci -c user.email=ci@localhost commit -qm "test build"
+          git push -q -f https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} ci-bin
 
   app:
     needs: engine
