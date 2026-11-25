@@ -2,36 +2,90 @@ name: Build Switchboard.exe
 
 on:
   push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Resolve dependencies
+        working-directory: engine
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          go get go.mau.fi/mautrix-whatsapp@main go.mau.fi/mautrix-meta@main modernc.org/sqlite@latest
+          go mod tidy
+      - name: Vet
+        working-directory: engine
+        env:
+          GOTOOLCHAIN: auto
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: go vet ./...
+      - name: Build engine.exe (Windows)
+        working-directory: engine
+        env:
+          GOTOOLCHAIN: auto
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: go build -trimpath -ldflags "-s -w" -o bin/engine.exe .
+      - name: Build engine (Linux, smoke test)
+        working-directory: engine
+        env:
+          GOTOOLCHAIN: auto
+          CGO_ENABLED: "0"
+        run: |
+          go build -o /tmp/engine-linux .
+          mkdir -p /tmp/sbtest
+          for net in whatsapp messenger instagram; do
+            echo "== $net"
+            ( printf '{"id":1,"cmd":"login_flows"}\n{"id":2,"cmd":"whoami"}\n'; sleep 6; printf '{"id":3,"cmd":"quit"}\n' ) | timeout 40 /tmp/engine-linux -network $net -account t$net -data /tmp/sbtest/$net 2>/tmp/sbtest/$net.log | head -c 3000
+            echo
+            tail -5 /tmp/sbtest/$net.log
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine
+          path: |
+            engine/bin/engine.exe
+            engine/go.mod
+            engine/go.sum
+
+  app:
+    needs: engine
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine
+          path: engine
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-
       - name: Install
         run: npm ci --no-audit --no-fund
-
       - name: Build portable exe
         run: npx electron-builder --win portable --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-
       - name: Publish as latest release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: Switchboard 1.0.${{ github.run_number }}
+          tag_name: v2.0.${{ github.run_number }}
+          name: Switchboard 2.0.${{ github.run_number }}
           make_latest: true
           body: |
             Download: https://github.com/${{ github.repository }}/releases/latest/download/Switchboard.exe
