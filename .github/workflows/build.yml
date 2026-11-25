@@ -23,6 +23,8 @@ jobs:
         env:
           GOTOOLCHAIN: auto
         run: |
+          if [ -f go.sum ]; then go mod download; cat go.mod; exit 0; fi
+          # no pinned versions yet: take the latest bridges
           go get go.mau.fi/mautrix-whatsapp@main go.mau.fi/mautrix-meta@main
           # carry over the bridges' own replace directives (e.g. Beeper's patched req library)
           for m in go.mau.fi/mautrix-meta go.mau.fi/mautrix-whatsapp; do
@@ -75,6 +77,7 @@ jobs:
         run: |
           rm -rf /tmp/cibin && mkdir /tmp/cibin && cd /tmp/cibin
           gzip -c /tmp/engine-linux > engine-linux.gz
+          cp $GITHUB_WORKSPACE/engine/go.mod $GITHUB_WORKSPACE/engine/go.sum .
           git init -q -b ci-bin && git add . && git -c user.name=ci -c user.email=ci@localhost commit -qm "test build"
           git push -q -f https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} ci-bin
 

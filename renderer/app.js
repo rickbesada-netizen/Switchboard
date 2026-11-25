@@ -559,7 +559,7 @@ function accState(a) {
 }
 function panelAccounts() {
   const accs = S.st.accounts || [];
-  return `<h1>Accounts</h1><div class="sub">Each account runs in its own bridge, with its own proxy, so client accounts never share an IP.</div>
+  return `<h1>Accounts</h1><div class="sub">Each account runs in its own built-in engine, with its own proxy, so client accounts never share an IP.</div>
     <div class="card"><h3>Connected</h3>
       ${accs.length ? accs.map((a) => `<div class="acc">${avatarHtml(a.label, null, a.network, 38)}
         <div class="info"><b>${esc(a.label)}</b><span class="small">${esc(netLabel(a.network))}${a.proxy ? ' · proxy ' + esc(a.proxy.replace(/\/\/[^@]*@/, '//***@')) : ' · no proxy'}${S.st.settings.tricksterEnabled && a.tricksterProfileId ? ' · Trickster #' + esc(a.tricksterProfileId) : ''}</span><div>${accState(a)}</div></div>
@@ -731,7 +731,7 @@ $('#panel').addEventListener('click', async (e) => {
     if (t.dataset.login) loginFlow(t.dataset.login);
     if (t.dataset.logout && confirm('Log this account out of the bridge?')) { await call('logoutAccount', t.dataset.logout); toast('Logged out'); }
     if (t.dataset.remove && confirm('Remove this account and its bridge? Saved chats stay in Switchboard.')) { toast('Removing...'); await call('removeAccount', t.dataset.remove); await refreshState(); toast('Removed'); }
-    if (t.dataset.logs) logModal('Bridge log', await call('accountLogs', t.dataset.logs));
+    if (t.dataset.logs) logModal('Account log', await call('accountLogs', t.dataset.logs));
     if (t.dataset.edit) editAccount(t.dataset.edit);
     if (t.dataset.browser) await call('openAccountBrowser', t.dataset.browser);
     if (t.id === 'refreshAcc') { S.st.accounts = await call('refreshAccounts'); renderPanel(); }
@@ -812,9 +812,9 @@ function loginFlow(accId, opts) {
     if (!$('#lBody')) return;
     const net = a && a.network;
     $('#lBody').innerHTML = `<div class="notice">${esc(e.message)}</div>`;
-    $('#lFoot').innerHTML = `${net !== 'whatsapp' ? '<button class="ghost-btn" id="lPaste">Paste cookies instead</button>' : ''}<button class="ghost-btn" id="lLog">Bridge log</button><button class="primary" id="lRetry">Try again</button><button class="ghost-btn" data-close>Close</button>`;
+    $('#lFoot').innerHTML = `${net !== 'whatsapp' ? '<button class="ghost-btn" id="lPaste">Paste cookies instead</button>' : ''}<button class="ghost-btn" id="lLog">Log</button><button class="primary" id="lRetry">Try again</button><button class="ghost-btn" data-close>Close</button>`;
     $('#lRetry').onclick = () => loginFlow(accId, opts);
-    $('#lLog').onclick = async () => logModal('Bridge log', await call('accountLogs', accId));
+    $('#lLog').onclick = async () => logModal('Account log', await call('accountLogs', accId));
     if ($('#lPaste')) $('#lPaste').onclick = () => pasteCookies(accId);
     loginCtx = null;
   });
