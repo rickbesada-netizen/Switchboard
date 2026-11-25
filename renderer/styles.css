@@ -207,3 +207,4 @@ table.list th { color: var(--dim); font-weight: 500; font-size: 12px; border-top
 .hist { background: var(--bg3); border-radius: 8px; padding: 8px 10px; margin: 6px 0; white-space: pre-wrap; }
 .hist small { color: var(--dim); display: block; }
 .notice a { color: #fff; text-decoration: underline; }
+.thumbs a { color: var(--accent2); }

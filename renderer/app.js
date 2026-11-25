@@ -84,7 +84,7 @@ function renderRail() {
   const items = [
     { k: 'inbox', ico: '💬', lbl: 'All chats', c: cnt(() => true) },
     ...Object.entries(NETS()).map(([id, n]) => ({ k: 'net:' + id, ico: `<span class="netdot net-${id}"></span>`, lbl: n.label, c: cnt((r) => r.network === id) })),
-    { k: 'post', ico: '📸', lbl: 'Post to Instagram' },
+    { k: 'post', ico: '📸', lbl: 'Post' },
     { k: 'scheduled', ico: '⏱', lbl: 'Scheduled', c: (S.st.schedule || []).filter((s) => s.status === 'pending').length },
     { k: 'automation', ico: '⚡', lbl: 'Automation' },
     { k: 'accounts', ico: '🔗', lbl: 'Accounts' },
@@ -582,22 +582,73 @@ function panelAccounts() {
     </div>`;
 }
 
+const POST_KINDS = {
+  igpost: { label: 'Instagram post', network: 'instagram', caption: true, media: 'required', note: 'Goes on the profile grid. "Post quietly" uses Instagram\'s own option to keep it out of followers\' feeds (some accounts don\'t have it yet).' },
+  igstory: { label: 'Instagram story', network: 'instagram', caption: false, media: 'one', note: 'Stories always appear in the story bar for whoever is allowed to see them. Choose Close Friends to limit it to your Close Friends list. Instagram only allows story uploads from its phone site, so Switchboard uses that.' },
+  fbpost: { label: 'Facebook post', network: 'messenger', caption: true, media: 'optional', note: 'Facebook has no "quiet" post. To keep a post low-key, set the audience: Only me keeps it on your profile for you alone, and Friends except hides it from the people you name. Page posts are always public.' },
+  fbstory: { label: 'Facebook story', network: 'messenger', caption: false, media: 'one-photo', note: 'Facebook stories can\'t be silent either, but you can limit the audience (Friends, or Custom for chosen people). Facebook\'s website only takes photo stories.' },
+};
+const AUDIENCES = {
+  igstory: [['everyone', 'Everyone (your story)'], ['close_friends', 'Close Friends only']],
+  fbpost: [['default', 'Keep my usual audience'], ['public', 'Public'], ['friends', 'Friends'], ['friends_except', 'Friends except...'], ['specific', 'Specific friends...'], ['only_me', 'Only me']],
+  fbstory: [['default', 'Keep my usual audience'], ['public', 'Public'], ['friends', 'Friends'], ['custom', 'Custom (chosen people)...']],
+};
+function postState() {
+  S.post = S.post || { kind: 'igpost', accountId: '', pageUrl: '', audience: '', people: '', caption: '', quiet: true, allowNormal: false, at: '' };
+  return S.post;
+}
+function readPostForm() {
+  const P = postState();
+  const v = (id) => (document.getElementById(id) ? document.getElementById(id).value : undefined);
+  const c = (id) => (document.getElementById(id) ? document.getElementById(id).checked : undefined);
+  if (v('pAcc') !== undefined) P.accountId = v('pAcc');
+  if (v('pAs') !== undefined) P.pageUrl = v('pAs') === '__add' ? '' : v('pAs');
+  if (v('pAud') !== undefined) P.audience = v('pAud');
+  if (v('pPeople') !== undefined) P.people = v('pPeople');
+  if (v('pCap') !== undefined) P.caption = v('pCap');
+  if (c('pQuiet') !== undefined) P.quiet = c('pQuiet');
+  if (c('pAllow') !== undefined) P.allowNormal = c('pAllow');
+  if (v('pAt') !== undefined) P.at = v('pAt');
+  return P;
+}
 function panelPost() {
-  const igs = (S.st.accounts || []).filter((a) => a.network === 'instagram');
-  return `<h1>Post to Instagram</h1><div class="sub">Posts straight to the profile grid. "Post quietly" uses Instagram's own option, so it doesn't go into followers' home feeds.</div>
-    ${!igs.length ? `<div class="notice">Add an Instagram account in <a href="#" data-view="accounts">Accounts</a> and log it in first.</div>` : ''}
-    <div class="notice info">Instagram is still rolling "Post quietly to profile" out, so some accounts don't have it yet. Press <b>Test</b> to check an account without posting anything.</div>
+  const P = postState();
+  const K = POST_KINDS[P.kind];
+  const accs = (S.st.accounts || []).filter((a) => a.network === K.network);
+  if (!accs.some((a) => a.id === P.accountId)) P.accountId = accs[0] ? accs[0].id : '';
+  const acc = account(P.accountId);
+  const isFb = K.network === 'messenger';
+  const pages = (acc && acc.pages) || [];
+  if (P.pageUrl && !pages.some((p) => p.url === P.pageUrl)) P.pageUrl = '';
+  const auds = AUDIENCES[P.kind];
+  if (auds && !auds.some(([k]) => k === P.audience)) P.audience = auds[0][0];
+  const onPage = isFb && P.pageUrl;
+  const needPeople = ['friends_except', 'specific', 'custom'].includes(P.audience) && !onPage;
+  return `<h1>Post</h1><div class="sub">Post to Instagram and Facebook, on profiles and Pages, with control over who sees it.</div>
+    <div class="chips" style="margin-bottom:14px">${Object.entries(POST_KINDS).map(([k, v]) => `<button class="chip ${P.kind === k ? 'on' : ''}" data-kind="${k}">${esc(v.label)}</button>`).join('')}</div>
+    <div class="notice info">${esc(K.note)}</div>
+    ${!accs.length ? `<div class="notice">Add ${isFb ? 'a Facebook / Messenger' : 'an Instagram'} account in <a href="#" data-view="accounts">Accounts</a> and log it in first.</div>` : ''}
     <div class="card">
       <div class="grid2">
-        <label class="field"><span>Account</span><select id="pAcc">${igs.map((a) => `<option value="${a.id}">${esc(a.label)}${S.st.settings.tricksterEnabled && a.tricksterProfileId ? ' (via Trickster)' : ''}</option>`).join('')}</select></label>
-        <label class="field"><span>Schedule (optional)</span><input type="datetime-local" id="pAt"></label>
+        <label class="field"><span>Account</span><select id="pAcc">${accs.map((a) => `<option value="${a.id}" ${a.id === P.accountId ? 'selected' : ''}>${esc(a.label)}${S.st.settings.tricksterEnabled && a.tricksterProfileId ? ' (via Trickster)' : ''}</option>`).join('')}</select></label>
+        ${isFb ? `<label class="field"><span>Post as</span><select id="pAs"><option value="">My profile</option>${pages.map((p) => `<option value="${esc(p.url)}" ${p.url === P.pageUrl ? 'selected' : ''}>Page: ${esc(p.name)}</option>`).join('')}<option value="__add">+ Add a Page...</option></select></label>` : '<div></div>'}
       </div>
-      <div class="field"><span>Photos / video (one item, or several for a carousel)</span>
+      <div id="addPageRow" class="hidden grid2" style="margin-bottom:10px">
+        <label class="field"><span>Page name (for you)</span><input id="newPageName" placeholder="Bella's Bakery"></label>
+        <label class="field"><span>Page link</span><div class="row" style="margin:0"><input id="newPageUrl" class="grow" placeholder="https://www.facebook.com/bellasbakery"><button class="ghost-btn" id="savePage">Add</button></div></label>
+      </div>
+      ${isFb && pages.length ? `<div class="small" style="margin:-4px 0 10px">${pages.map((p) => `<span class="thumbs"><span class="t">${esc(p.name)} <a href="#" data-delpage="${esc(p.url)}">remove</a></span></span>`).join(' ')}</div>` : ''}
+      <div class="field"><span>${K.media === 'optional' ? 'Photos / video (optional)' : K.media === 'required' ? 'Photos / video (one, or several for a carousel)' : K.media === 'one-photo' ? 'One photo' : 'One photo or video'}</span>
         <div class="btns"><button class="ghost-btn" id="pPick">Choose files</button><button class="ghost-btn" id="pClear">Clear</button></div><div class="thumbs" id="pFiles"></div></div>
-      <label class="field"><span>Caption</span><textarea id="pCap" rows="5" placeholder="Write a caption..."></textarea></label>
-      <div class="row"><label class="switch"><input type="checkbox" id="pQuiet" checked><span></span></label><span class="grow">Post quietly to profile (keep it out of followers' feeds)</span></div>
-      <div class="row"><label class="switch"><input type="checkbox" id="pAllow"><span></span></label><span class="grow">Post normally if this account doesn't have the quiet option</span></div>
-      <div class="btns" style="margin-top:14px"><button class="ghost-btn" id="pTest">Test (don't post)</button><button class="primary" id="pNow">Post now</button><button class="ghost-btn" id="pSched">Schedule</button></div>
+      ${K.caption ? `<label class="field"><span>${P.kind === 'fbpost' ? 'Text' : 'Caption'}</span><textarea id="pCap" rows="5" placeholder="${P.kind === 'fbpost' ? "What's on your mind?" : 'Write a caption...'}">${esc(P.caption)}</textarea></label>` : ''}
+      ${P.kind === 'igpost' ? `
+        <div class="row"><label class="switch"><input type="checkbox" id="pQuiet" ${P.quiet ? 'checked' : ''}><span></span></label><span class="grow">Post quietly to profile (keep it out of followers' feeds)</span></div>
+        <div class="row"><label class="switch"><input type="checkbox" id="pAllow" ${P.allowNormal ? 'checked' : ''}><span></span></label><span class="grow">Post normally if this account doesn't have the quiet option</span></div>` : ''}
+      ${auds && !onPage ? `<label class="field"><span>Who can see it</span><select id="pAud">${auds.map(([k, l]) => `<option value="${k}" ${k === P.audience ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>` : ''}
+      ${onPage && auds ? `<div class="small" style="margin-bottom:10px">Posting as a Page: Page ${P.kind === 'fbstory' ? 'stories' : 'posts'} are public.</div>` : ''}
+      ${needPeople ? `<label class="field"><span>Names (comma separated, exactly as they appear on Facebook)</span><input id="pPeople" value="${esc(P.people)}" placeholder="Jane Smith, Tom Lee"></label>` : ''}
+      <label class="field" style="max-width:320px"><span>Schedule (optional)</span><input type="datetime-local" id="pAt" value="${esc(P.at)}"></label>
+      <div class="btns" style="margin-top:6px"><button class="ghost-btn" id="pTest">Test (don't post)</button><button class="primary" id="pNow">Post now</button><button class="ghost-btn" id="pSched">Schedule</button></div>
     </div>
     <div class="card"><h3>Progress</h3><div class="logbox" id="igLog">${esc(S.igLog.join('\n')) || 'Nothing yet.'}</div></div>`;
 }
@@ -606,28 +657,47 @@ function renderIgFiles() {
   if (el) el.innerHTML = S.igFiles.map((f) => `<span class="t">${esc(f.split(/[\\/]/).pop())}</span>`).join('') || '<span class="small">No files chosen</span>';
 }
 function igJob(extra) {
-  return { accountId: $('#pAcc').value, files: S.igFiles, caption: $('#pCap').value, quiet: $('#pQuiet').checked, allowNormal: $('#pAllow').checked, ...extra };
+  const P = readPostForm();
+  const job = { kind: P.kind, accountId: P.accountId, files: S.igFiles, caption: POST_KINDS[P.kind].caption ? P.caption : '', ...extra };
+  if (P.kind === 'igpost') { job.quiet = P.quiet; job.allowNormal = P.allowNormal; }
+  if (POST_KINDS[P.kind].network === 'messenger') job.pageUrl = P.pageUrl || '';
+  if (AUDIENCES[P.kind] && !job.pageUrl) job.audience = P.audience;
+  if (['friends_except', 'specific', 'custom'].includes(job.audience)) job.people = (P.people || '').split(',').map((x) => x.trim()).filter(Boolean);
+  return job;
+}
+function checkJob(job) {
+  const K = POST_KINDS[job.kind];
+  if (!job.accountId) return 'Pick an account first';
+  if (K.media !== 'optional' && !job.files.length) return 'Choose a photo or video first';
+  if ((K.media === 'one' || K.media === 'one-photo') && job.files.length > 1) return 'Stories take one file at a time';
+  if (job.kind === 'fbpost' && !job.files.length && !(job.caption || '').trim()) return 'Write something or add a photo';
+  if (job.people !== undefined && !job.people.length) return 'Add at least one name';
+  return null;
 }
 async function runIg(job) {
   S.igLog = [];
-  $('#igLog').textContent = '';
+  if ($('#igLog')) $('#igLog').textContent = '';
   try {
-    const r = await call('igPost', job);
-    if (job.dryRun) toast(r.quietAvailable ? 'This account has "Post quietly". Ready to post.' : 'This account does NOT have the quiet option yet.', !r.quietAvailable);
-    else toast(r.quiet ? 'Posted quietly to profile' : 'Posted');
+    const r = await call('socialPost', job);
+    if (job.dryRun) {
+      const f = r.found || {};
+      const parts = Object.entries(f).map(([k, v]) => `${k === 'quiet' ? 'Post quietly option' : k === 'closeFriends' ? 'Close Friends option' : k === 'audience' ? 'Audience setting' : k === 'share' ? 'Share button' : k}: ${v ? 'found' : 'NOT found'}`);
+      S.igLog.push('Test finished, nothing was posted. ' + parts.join(' · '));
+      toast(Object.values(f).every(Boolean) ? 'Test passed: everything needed was found' : 'Test finished, but something was missing (see Progress)', !Object.values(f).every(Boolean));
+    } else toast(job.quiet && r.quiet ? 'Posted quietly to profile' : 'Posted');
   } catch (e) {
     S.igLog.push('Error: ' + e.message + (e.screenshot ? '\nScreenshot: ' + e.screenshot : ''));
-    if ($('#igLog')) $('#igLog').textContent = S.igLog.join('\n');
     toast(e.message, true);
   }
+  if ($('#igLog')) $('#igLog').textContent = S.igLog.join('\n');
 }
 
 function panelScheduled() {
   const list = [...(S.st.schedule || [])].sort((a, b) => a.at - b.at);
   return `<h1>Scheduled</h1><div class="sub">Messages and Instagram posts waiting to go out. Keep Switchboard open or in the tray.</div>
     <div class="card"><table class="list"><tr><th>When</th><th>What</th><th>Where</th><th>Status</th><th></th></tr>
-    ${list.map((s) => `<tr><td>${new Date(s.at).toLocaleString()}</td><td>${s.kind === 'igpost' ? '📸 ' + esc((s.caption || '').slice(0, 60) || (s.files || []).length + ' file(s)') + (s.quiet ? ' <span class="small">(quiet)</span>' : '') : '💬 ' + esc((s.text || '').slice(0, 80))}</td>
-      <td>${esc(s.kind === 'igpost' ? (account(s.accountId) || {}).label || '' : s.roomName || '')}</td>
+    ${list.map((s) => `<tr><td>${new Date(s.at).toLocaleString()}</td><td>${s.kind === 'message' ? '💬 ' + esc((s.text || '').slice(0, 80)) : `<b>${esc((POST_KINDS[s.kind] || {}).label || s.kind)}</b> ` + esc((s.caption || '').slice(0, 60) || (s.files || []).length + ' file(s)') + (s.quiet ? ' <span class="small">(quiet)</span>' : '') + (s.audience && s.audience !== 'default' && s.audience !== 'everyone' ? ` <span class="small">(${esc(s.audience.replace(/_/g, ' '))})</span>` : '')}</td>
+      <td>${esc(s.kind === 'message' ? s.roomName || '' : ((account(s.accountId) || {}).label || '') + (s.pageUrl ? ' · Page' : ''))}</td>
       <td><span class="state ${s.status === 'done' ? 'ok' : s.status === 'failed' ? 'bad' : 'wait'}">${esc(s.status)}</span>${s.error ? `<div class="small">${esc(s.error)}</div>` : ''}</td>
       <td><button class="ghost-btn" data-unsched="${s.id}">Remove</button></td></tr>`).join('') || '<tr><td colspan="5" class="small">Nothing scheduled.</td></tr>'}
     </table><div class="btns" style="margin-top:12px"><button class="ghost-btn" id="clearDone">Clear finished</button></div></div>`;
@@ -702,6 +772,11 @@ function panelSettings() {
 }
 
 // panel events
+$('#panel').addEventListener('change', (e) => {
+  if (S.view !== 'post') return;
+  if (e.target.id === 'pAs' && e.target.value === '__add') { $('#addPageRow').classList.remove('hidden'); return; }
+  if (['pAcc', 'pAs', 'pAud'].includes(e.target.id)) { readPostForm(); renderPanel(); }
+});
 $('#panel').addEventListener('click', async (e) => {
   const t = e.target;
   const v = t.closest('[data-view]');
@@ -736,16 +811,42 @@ $('#panel').addEventListener('click', async (e) => {
     if (t.dataset.browser) await call('openAccountBrowser', t.dataset.browser);
     if (t.id === 'refreshAcc') { S.st.accounts = await call('refreshAccounts'); renderPanel(); }
     // post
-    if (t.id === 'pPick') { S.igFiles = [...S.igFiles, ...(await call('pickMedia'))]; renderIgFiles(); }
+    if (t.dataset.kind) { readPostForm(); postState().kind = t.dataset.kind; renderPanel(); }
+    if (t.id === 'pPick') { readPostForm(); S.igFiles = [...S.igFiles, ...(await call('pickMedia'))]; renderIgFiles(); }
     if (t.id === 'pClear') { S.igFiles = []; renderIgFiles(); }
-    if (t.id === 'pTest') { if (!S.igFiles.length) return toast('Choose a photo first - the test needs one to reach the share screen (nothing gets posted)', true); runIg(igJob({ dryRun: true })); }
-    if (t.id === 'pNow') { if (!S.igFiles.length) return toast('Choose a photo or video first', true); runIg(igJob()); }
+    if (t.id === 'savePage') {
+      const P = readPostForm();
+      const url = $('#newPageUrl').value.trim();
+      if (!/^https?:\/\/(www\.|m\.|web\.)?facebook\.com\//i.test(url)) return toast('Paste the Page link, e.g. https://www.facebook.com/yourpage', true);
+      const acc = account(P.accountId);
+      const pages = [...((acc && acc.pages) || []), { name: $('#newPageName').value.trim() || url.replace(/^.*facebook\.com\//, ''), url }];
+      const saved = await call('savePages', P.accountId, pages);
+      acc.pages = saved;
+      P.pageUrl = url;
+      renderPanel();
+      toast('Page added');
+    }
+    if (t.dataset.delpage) {
+      e.preventDefault();
+      const P = readPostForm();
+      const acc = account(P.accountId);
+      acc.pages = await call('savePages', P.accountId, (acc.pages || []).filter((p) => p.url !== t.dataset.delpage));
+      renderPanel();
+    }
+    if (t.id === 'pTest' || t.id === 'pNow') {
+      const job = igJob(t.id === 'pTest' ? { dryRun: true } : {});
+      const err = checkJob(job);
+      if (err) return toast(err, true);
+      runIg(job);
+    }
     if (t.id === 'pSched') {
-      const at = new Date($('#pAt').value).getTime();
+      const job = igJob();
+      const err = checkJob(job);
+      if (err) return toast(err, true);
+      const at = new Date(readPostForm().at).getTime();
       if (!at || at < Date.now()) return toast('Pick a time in the future', true);
-      if (!S.igFiles.length) return toast('Choose a photo or video first', true);
-      await call('scheduleAdd', { kind: 'igpost', at, ...igJob() });
-      toast('Post scheduled');
+      await call('scheduleAdd', { ...job, at });
+      toast('Scheduled for ' + new Date(at).toLocaleString());
     }
     // schedule
     if (t.dataset.unsched) await call('scheduleRemove', t.dataset.unsched);

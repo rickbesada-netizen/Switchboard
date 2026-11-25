@@ -9,7 +9,7 @@ const { Store } = require('./src/store');
 const { Engine } = require('./src/engine');
 const { parseCookieText, fillCookieFields } = require('./src/bridges');
 const trickster = require('./src/trickster');
-const igposter = require('./src/igposter');
+const social = require('./src/social');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'sbmedia', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } },
@@ -380,7 +380,7 @@ app.on('login', (event, wc, details, authInfo, callback) => {
 function useTrickster(acc) {
   return !!(cfg.settings.tricksterEnabled && acc.tricksterProfileId);
 }
-async function igAccount(acc) {
+async function postAccount(acc) {
   // What the poster needs: Trickster profile if enabled, otherwise this account's own saved login
   return { ...acc, tricksterProfileId: useTrickster(acc) ? acc.tricksterProfileId : null, cookies: useTrickster(acc) ? acc.cookies : await sessionCookies(acc) };
 }
@@ -453,7 +453,7 @@ async function runLogin(accId, opts = {}) {
     }
     if (step.type === 'cookies') {
       if (!cookies) cookies = await cookiesForAccount(acc, opts, step.cookies);
-      if (useTrickster(acc) && acc.network === 'instagram') { acc.cookies = cookies; cfg.save(); }
+      if (useTrickster(acc)) { acc.cookies = cookies; cfg.save(); }
       const { body, missing } = fillCookieFields(step.cookies, cookies);
       if (missing.length) throw new Error('Missing cookies: ' + missing.join(', ') + '. Make sure you are logged in, then try again.');
       send('login-step', { accId, type: 'info', text: 'Sending cookies to the bridge...' });
@@ -476,10 +476,10 @@ async function runLogin(accId, opts = {}) {
 async function runScheduled(item) {
   if (item.kind === 'message') {
     await matrix.sendText(item.roomId, item.text);
-  } else if (item.kind === 'igpost') {
+  } else if (social.KINDS[item.kind]) {
     const acc = cfg.account(item.accountId);
     if (!acc) throw new Error('Account no longer exists');
-    await igposter.post(cfg, await igAccount(acc), item, (t) => log(`[IG ${acc.label}] ${t}`));
+    await social.run(cfg, await postAccount(acc), item, (t) => log(`[Post ${acc.label}] ${t}`));
   }
 }
 function startScheduler() {
@@ -763,10 +763,18 @@ function setupIpc() {
     const res = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: [{ name: 'Photos and videos', extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'mp4', 'mov'] }] });
     return res.canceled ? [] : res.filePaths;
   });
-  handle('igPost', async (job) => {
+  handle('socialPost', async (job) => {
     const acc = cfg.account(job.accountId);
-    if (!acc) throw new Error('Pick an Instagram account');
-    return igposter.post(cfg, await igAccount(acc), job, (t) => send('ig-log', t));
+    if (!acc) throw new Error('Pick an account');
+    return social.run(cfg, await postAccount(acc), job, (t) => send('ig-log', t));
+  });
+  handle('savePages', (id, pages) => {
+    const acc = cfg.account(id);
+    if (!acc) throw new Error('Unknown account');
+    acc.pages = (pages || []).filter((p) => p && p.url).map((p) => ({ name: String(p.name || p.url).trim(), url: String(p.url).trim() }));
+    cfg.save(true);
+    send('accounts', cfg.accounts.map(publicAccount));
+    return acc.pages;
   });
   handle('openPath', (p) => shell.openPath(p));
   handle('dataFolder', () => shell.openPath(U.DATA));

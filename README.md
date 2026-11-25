@@ -12,7 +12,12 @@ One inbox for WhatsApp, Messenger and Instagram on your PC, plus quiet posting t
 - **Multiple accounts per app, each with its own proxy**: every account runs in its own engine, so client accounts never share an IP.
 - **Works on its own**: Messenger and Instagram log in through Switchboard's own login window. Each account has its own private browser session that goes through that account's proxy. *Open browser* on an account lets you browse the site as that account.
 - **Optional Trickster connection**: turn on *Settings → Connect to Trickster* to link an account to a Trickster profile. Its login and Instagram posting then run inside that profile, through Trickster's local API on port 53200.
-- **Post to Instagram quietly**: posts to the profile grid using Instagram's own *Post quietly to profile* option, so the post stays out of followers' home feeds. Has a *Test* button that checks whether an account has the option without posting anything. You can post now or schedule it.
+- **Post screen** for Instagram posts, Instagram stories, Facebook posts and Facebook stories, on your profile or any Facebook Page you manage, with a *Test* button that goes up to the final Share/Post click and then stops, plus scheduling:
+  - *Instagram posts*: "Post quietly to profile" (Instagram's own option) keeps a post out of followers' feeds.
+  - *Instagram stories*: Everyone, or Close Friends only. Uses Instagram's phone site, because the desktop site can't post stories.
+  - *Facebook posts*: Public, Friends, Friends except..., Specific friends..., or Only me. Facebook has no "quiet" option, so the audience is how you keep a post low-key. Page posts are public.
+  - *Facebook stories*: Public, Friends, or Custom (chosen people). Photos only, because Facebook's website doesn't take video stories.
+  - Facebook posting uses your *Facebook / Messenger* accounts, which share the same Facebook login. Add Pages by pasting their link under *Post as → Add a Page*.
 - **Agency tools**: quick replies (type `/`), auto-replies (keywords, hours, cooldown, per account), tags, private notes per chat, send later, and chat export (TXT/CSV/JSON).
 - Replies, reactions, editing and unsending your own messages, files, photos, video and voice notes, drag and drop.
 

@@ -2,7 +2,7 @@ const U = require('./util');
 
 const NETWORKS = {
   whatsapp: { label: 'WhatsApp', short: 'wa', color: '#25D366', imageKey: 'whatsapp', login: 'qr' },
-  messenger: { label: 'Messenger', short: 'fb', color: '#0084FF', imageKey: 'messenger', login: 'cookies', flow: 'facebook', cookieSite: 'https://www.facebook.com', loginUrl: 'https://www.facebook.com/login', loginCookie: 'c_user' },
+  messenger: { label: 'Facebook / Messenger', short: 'fb', color: '#0084FF', imageKey: 'messenger', login: 'cookies', flow: 'facebook', cookieSite: 'https://www.facebook.com', loginUrl: 'https://www.facebook.com/login', loginCookie: 'c_user' },
   instagram: { label: 'Instagram', short: 'ig', color: '#E1306C', imageKey: 'instagram', login: 'cookies', flow: 'instagram', cookieSite: 'https://www.instagram.com', loginUrl: 'https://www.instagram.com/accounts/login/', loginCookie: 'sessionid' },
 };
 
