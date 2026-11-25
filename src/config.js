@@ -13,6 +13,9 @@ const DEFAULTS = {
     hideTyping: true,
     keepDeleted: true,
     notifications: true,
+    muteHidden: true,
+    messengerEncryptedHistory: true,
+    hiddenPinHash: null,
     minimizeToTray: true,
     tricksterEnabled: false,
     tricksterApi: 'http://127.0.0.1:53200',
@@ -24,9 +27,10 @@ const DEFAULTS = {
   accounts: [],
   counters: {},
   tags: [
-    { id: 'client', name: 'Client', color: '#7c5cff' },
-    { id: 'urgent', name: 'Urgent', color: '#ff5c7c' },
     { id: 'personal', name: 'Personal', color: '#38bdf8' },
+    { id: 'business', name: 'Business', color: '#34d399' },
+    { id: 'church', name: 'Church', color: '#fbbf24' },
+    { id: 'urgent', name: 'Urgent', color: '#ff5c7c' },
   ],
   quickReplies: [
     { id: 'thanks', shortcut: 'thanks', text: 'Thanks for your message! I will get back to you shortly.' },

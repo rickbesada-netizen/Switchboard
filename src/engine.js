@@ -47,6 +47,8 @@ class Proc {
       '-backfill', String(cfg.settings.backfillMessages || 200),
     ];
     if (this.acc.proxy) args.push('-proxy', this.acc.proxy);
+    // Messenger: restore end-to-end encrypted chat history (asks for the 6-digit backup PIN at login)
+    if (this.acc.network === 'messenger' && cfg.settings.messengerEncryptedHistory !== false) args.push('-netcfg', '{e2ee_backfill: true}');
     fs.mkdirSync(U.p('engine', this.acc.id), { recursive: true });
     fs.mkdirSync(U.p('media'), { recursive: true });
     this.rotateLog();

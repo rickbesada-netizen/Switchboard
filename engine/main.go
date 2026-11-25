@@ -40,6 +40,7 @@ var (
 	flagServer  = flag.String("server", "switchboard.local", "fake server name used in IDs")
 	flagUser    = flag.String("user", "me", "local user name")
 	flagBackfill = flag.Int("backfill", 200, "messages to load per chat on first sync")
+	flagNetCfg   = flag.String("netcfg", "", "YAML (flow style) overrides for the network config, e.g. {e2ee_backfill: true}")
 )
 
 // ---------------------------------------------------------------- output
@@ -102,6 +103,11 @@ func main() {
 	if netCfg != nil {
 		if err := yaml.Unmarshal([]byte(example), netCfg); err != nil {
 			fatal("failed to load network defaults: " + err.Error())
+		}
+		if *flagNetCfg != "" {
+			if err := yaml.Unmarshal([]byte(*flagNetCfg), netCfg); err != nil {
+				fatal("bad -netcfg: " + err.Error())
+			}
 		}
 	}
 

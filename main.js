@@ -124,7 +124,7 @@ function summary(r) {
     note: r.note || '',
     ghost: r.ghost, ghostEffective: ghostOn(r),
     hideTyping: r.hideTyping, hideTypingEffective: typingHidden(r),
-    pinned: !!r.pinned, archived: !!r.archived,
+    pinned: !!r.pinned, archived: !!r.archived, stash: !!r.stash,
     typing: (r.typing || []).filter((u) => !isMe(u)).map((u) => memberName(r, u)),
     isGroup: o.length > 1,
     seenTs,
@@ -139,9 +139,16 @@ function publicAccount(a) {
   const { secret, cookies, ...rest } = a;
   return { ...rest, hasCookies: !!(cookies && cookies.length), status: accStatus[a.id] || null };
 }
+function publicSettings() {
+  const { hiddenPinHash, ...rest } = cfg.settings;
+  return { ...rest, hiddenPinSet: !!hiddenPinHash };
+}
+function pinHash(pin) {
+  return require('crypto').createHash('sha256').update('switchboard-hidden:' + pin).digest('hex');
+}
 function state() {
   return {
-    settings: cfg.settings,
+    settings: publicSettings(),
     setupDone: cfg.setupDone,
     stackStatus: engineStatus,
     networks: NETWORKS,
@@ -154,8 +161,18 @@ function state() {
     me: matrix ? matrix.userId : null,
   };
 }
+// New chats from an account go into that account's default folders
+function applyDefaultFolders(r) {
+  if (r.foldersInit) return;
+  const acc = roomAccount(r);
+  if (!acc) return;
+  if ((acc.defaultFolders || []).length && !(r.tags || []).length) r.tags = [...acc.defaultFolders];
+  r.foldersInit = true;
+  store.roomsDirty = true;
+}
 function pushRoom(roomId) {
   const r = store.rooms[roomId];
+  if (r) applyDefaultFolders(r);
   if (r) send('room', summary(r));
 }
 
@@ -255,6 +272,7 @@ function onEvent(roomId, res, { live, catchup, since }) {
 
 function notify(r, m) {
   if (!cfg.settings.notifications || !Notification.isSupported()) return;
+  if (r.stash && cfg.settings.muteHidden !== false) return;
   if (win && win.isFocused() && focusedRoom === r.id) return;
   const acc = roomAccount(r);
   const n = new Notification({
@@ -621,7 +639,7 @@ function setupIpc() {
   });
   handle('roomSettings', (roomId, patch) => {
     const r = store.room(roomId);
-    for (const k of ['ghost', 'hideTyping', 'tags', 'note', 'pinned', 'archived']) if (k in patch) r[k] = patch[k];
+    for (const k of ['ghost', 'hideTyping', 'tags', 'note', 'pinned', 'archived', 'stash']) if (k in patch) r[k] = patch[k];
     store.roomsDirty = true;
     pushRoom(roomId);
     return summary(r);
@@ -675,6 +693,15 @@ function setupIpc() {
     if (!acc) throw new Error('Unknown account');
     const proxyChanged = 'proxy' in patch && (patch.proxy || '').trim() !== acc.proxy;
     if ('label' in patch) acc.label = patch.label;
+    if (Array.isArray(patch.defaultFolders)) {
+      acc.defaultFolders = patch.defaultFolders;
+      if (patch.applyFoldersToExisting && acc.defaultFolders.length) {
+        for (const r of Object.values(store.rooms)) {
+          if (roomAccount(r) === acc && !(r.tags || []).length) { r.tags = [...acc.defaultFolders]; pushRoom(r.id); }
+        }
+        store.roomsDirty = true;
+      }
+    }
     if ('tricksterProfileId' in patch) acc.tricksterProfileId = patch.tricksterProfileId || null;
     if (proxyChanged) acc.proxy = (patch.proxy || '').trim();
     cfg.save(true);
@@ -728,11 +755,21 @@ function setupIpc() {
   });
 
   // settings & tools
+  handle('setHiddenPin', (pin) => {
+    cfg.settings.hiddenPinHash = pin ? pinHash(String(pin)) : null;
+    cfg.save(true);
+    return publicSettings();
+  });
+  handle('checkHiddenPin', (pin) => !cfg.settings.hiddenPinHash || pinHash(String(pin || '')) === cfg.settings.hiddenPinHash);
   handle('saveSettings', async (patch) => {
+    delete patch.hiddenPinHash;
+    delete patch.hiddenPinSet;
+    const historyChanged = 'messengerEncryptedHistory' in patch && patch.messengerEncryptedHistory !== cfg.settings.messengerEncryptedHistory;
     Object.assign(cfg.settings, patch);
+    if (historyChanged) for (const a of cfg.accounts) if (a.network === 'messenger') engine.restartAccount(a).catch(() => {});
     cfg.save(true);
     for (const r of Object.values(store.rooms)) pushRoom(r.id);
-    return cfg.settings;
+    return publicSettings();
   });
   handle('saveList', (key, list) => {
     if (!['tags', 'quickReplies', 'autoReplies'].includes(key)) throw new Error('bad key');
@@ -790,6 +827,12 @@ app.whenReady().then(async () => {
   U.init(path.join(app.getPath('userData'), 'data'));
   fs.mkdirSync(U.p('logs'), { recursive: true });
   cfg = new Config();
+  if (!cfg.foldersV2) {
+    const want = [['personal', 'Personal', '#38bdf8'], ['business', 'Business', '#34d399'], ['church', 'Church', '#fbbf24']];
+    for (const [id, name, color] of want) if (!cfg.tags.some((t) => t.name.toLowerCase() === name.toLowerCase())) cfg.tags.push({ id, name, color });
+    cfg.foldersV2 = true;
+    cfg.save(true);
+  }
   store = new Store();
   engine = new Engine(cfg, store);
   matrix = engine;

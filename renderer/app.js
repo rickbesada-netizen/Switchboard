@@ -79,7 +79,7 @@ function account(id) {
 
 // ------------------------------------------------------------------ rail
 function renderRail() {
-  const rooms = [...S.rooms.values()].filter((r) => !r.archived);
+  const rooms = [...S.rooms.values()].filter((r) => !r.archived && !r.stash);
   const cnt = (f) => rooms.filter(f).reduce((n, r) => n + (r.unread ? 1 : 0), 0);
   const items = [
     { k: 'inbox', ico: '💬', lbl: 'All chats', c: cnt(() => true) },
@@ -96,7 +96,12 @@ function renderRail() {
     const c = cnt((r) => r.accountId === a.id);
     return `<button class="rail-item ${cur === 'acc:' + a.id ? 'on' : ''}" data-k="acc:${a.id}"><span class="ico"><span class="netdot net-${a.network}"></span></span><span class="lbl">${esc(a.label)}</span>${c ? `<span class="cnt">${c}</span>` : ''}</button>`;
   }).join('') || '<div class="small" style="padding:4px 10px">None yet</div>';
-  $('#railTags').innerHTML = (S.st.tags || []).map((t) => `<button class="rail-item ${cur === 'tag:' + t.id ? 'on' : ''}" data-k="tag:${t.id}"><span class="ico"><span class="netdot" style="background:${esc(t.color)}"></span></span><span class="lbl">${esc(t.name)}</span></button>`).join('');
+  const hiddenUnread = [...S.rooms.values()].filter((r) => r.stash && r.unread).length;
+  $('#railTags').innerHTML = (S.st.tags || []).map((t) => {
+    const c = cnt((r) => (r.tags || []).includes(t.id));
+    return `<button class="rail-item ${cur === 'tag:' + t.id ? 'on' : ''}" data-k="tag:${t.id}" data-drop="${t.id}"><span class="ico"><span class="netdot" style="background:${esc(t.color)}"></span></span><span class="lbl">${esc(t.name)}</span>${c ? `<span class="cnt">${c}</span>` : ''}</button>`;
+  }).join('') + `<button class="rail-item ${cur === 'tag:__none' ? 'on' : ''}" data-k="tag:__none"><span class="ico">○</span><span class="lbl">No folder</span>${cnt((r) => !(r.tags || []).length) ? `<span class="cnt">${cnt((r) => !(r.tags || []).length)}</span>` : ''}</button>`
+    + `<button class="rail-item ${cur === 'tag:__hidden' ? 'on' : ''}" data-k="tag:__hidden" data-drop="__hidden"><span class="ico">🔒</span><span class="lbl">Hidden</span>${hiddenUnread && S.hiddenUnlocked ? `<span class="cnt">${hiddenUnread}</span>` : ''}</button>`;
   const st = S.stack.status;
   const accs = S.st.accounts || [];
   const bad = accs.filter((a) => a.status && a.status.logins && a.status.logins.some((l) => /BAD_CREDENTIALS|UNKNOWN_ERROR/.test(l.state))).length;
@@ -113,12 +118,14 @@ function railKey() {
   if (f.tag) return 'tag:' + f.tag;
   return 'inbox';
 }
-$('#rail').addEventListener('click', (e) => {
+$('#rail').addEventListener('click', async (e) => {
   const b = e.target.closest('[data-k]');
   if (b) {
     const k = b.dataset.k;
+    if (k === 'tag:__hidden' && !(await unlockHidden())) return;
     if (k === 'inbox' || k.includes(':')) {
       S.filter.network = S.filter.accountId = S.filter.tag = null;
+      S.filter.subNet = S.filter.subTag = null;
       if (k.startsWith('net:')) S.filter.network = k.slice(4);
       if (k.startsWith('acc:')) S.filter.accountId = k.slice(4);
       if (k.startsWith('tag:')) S.filter.tag = k.slice(4);
@@ -126,6 +133,39 @@ $('#rail').addEventListener('click', (e) => {
     } else showView(k);
   }
   if (e.target.closest('#engineStatus')) showView('engine');
+});
+
+async function unlockHidden() {
+  if (S.hiddenUnlocked || !S.st.settings.hiddenPinSet) { S.hiddenUnlocked = true; return true; }
+  return new Promise((resolve) => {
+    modal(`<h2>Hidden chats</h2><p class="small">Enter your passcode to open hidden chats.</p><input id="hPin" type="password" inputmode="numeric" style="width:100%" autofocus>
+      <div class="modal-foot"><button class="ghost-btn" id="hCancel">Cancel</button><button class="primary" id="hOk">Open</button></div>`);
+    const go = async () => {
+      if (await call('checkHiddenPin', $('#hPin').value)) { S.hiddenUnlocked = true; closeModal(); resolve(true); }
+      else { toast('Wrong passcode', true); $('#hPin').value = ''; }
+    };
+    $('#hOk').onclick = go;
+    $('#hPin').onkeydown = (ev) => { if (ev.key === 'Enter') go(); };
+    $('#hCancel').onclick = () => { closeModal(); resolve(false); };
+    setTimeout(() => $('#hPin') && $('#hPin').focus(), 50);
+  });
+}
+async function addToFolder(roomId, folder) {
+  const r = S.rooms.get(roomId);
+  if (!r) return;
+  if (folder === '__hidden') { await call('roomSettings', roomId, { stash: true }); toast('Chat hidden'); return; }
+  if ((r.tags || []).includes(folder)) return;
+  await call('roomSettings', roomId, { tags: [...(r.tags || []), folder] });
+  toast('Added to ' + ((tagById(folder) || {}).name || 'folder'));
+}
+$('#rail').addEventListener('dragover', (e) => { const t = e.target.closest('[data-drop]'); if (t) { e.preventDefault(); t.classList.add('on'); } });
+$('#rail').addEventListener('dragleave', (e) => { const t = e.target.closest('[data-drop]'); if (t && railKey() !== t.dataset.k) t.classList.remove('on'); });
+$('#rail').addEventListener('drop', (e) => {
+  const t = e.target.closest('[data-drop]');
+  if (!t) return;
+  e.preventDefault();
+  const id = e.dataTransfer.getData('text/room');
+  if (id) addToFolder(id, t.dataset.drop).then(renderRail);
 });
 
 function showView(v) {
@@ -142,26 +182,51 @@ function visibleRooms() {
   const f = S.filter;
   const q = f.q.trim().toLowerCase();
   return [...S.rooms.values()].filter((r) => {
+    if (f.tag === '__hidden' ? !r.stash : r.stash) return false;
     if (f.chip === 'archived' ? !r.archived : r.archived) return false;
     if (f.chip === 'unread' && !r.unread) return false;
     if (f.chip === 'pinned' && !r.pinned) return false;
     if (f.network && r.network !== f.network) return false;
     if (f.accountId && r.accountId !== f.accountId) return false;
-    if (f.tag && !(r.tags || []).includes(f.tag)) return false;
+    if (f.tag === '__none' && (r.tags || []).length) return false;
+    if (f.tag && f.tag !== '__none' && f.tag !== '__hidden' && !(r.tags || []).includes(f.tag)) return false;
+    if (f.subNet && r.network !== f.subNet) return false;
+    if (f.subTag === '__none' && (r.tags || []).length) return false;
+    if (f.subTag && f.subTag !== '__none' && !(r.tags || []).includes(f.subTag)) return false;
     if (q && !(r.name.toLowerCase().includes(q) || (r.lastPreview || '').toLowerCase().includes(q) || (r.note || '').toLowerCase().includes(q))) return false;
     return true;
   }).sort((a, b) => (b.pinned - a.pinned) || (b.lastTs - a.lastTs));
+}
+function renderSubChips() {
+  const f = S.filter;
+  const el = $('#subChips');
+  let chips = [];
+  if (f.tag) {
+    // inside a folder: split by app
+    const nets = [...new Set([...S.rooms.values()].map((r) => r.network).filter(Boolean))];
+    if (nets.length > 1) chips = [['net', '', 'All apps'], ...nets.map((n) => ['net', n, netLabel(n)])];
+  } else if ((S.st.tags || []).length) {
+    // inside an app / account / everything: split by folder
+    chips = [['tag', '', 'All folders'], ...(S.st.tags || []).map((t) => ['tag', t.id, t.name]), ['tag', '__none', 'No folder']];
+  }
+  if (!chips.length) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.innerHTML = chips.map(([kind, v, label]) => {
+    const on = kind === 'net' ? (f.subNet || '') === v : (f.subTag || '') === v;
+    return `<button class="chip sub ${on ? 'on' : ''}" data-sub="${kind}" data-v="${esc(v)}">${esc(label)}</button>`;
+  }).join('');
 }
 let roomsRaf = 0;
 function renderRooms() {
   cancelAnimationFrame(roomsRaf);
   roomsRaf = requestAnimationFrame(() => {
+    renderSubChips();
     const list = visibleRooms();
     let html = list.map((r) => {
       const acc = account(r.accountId);
       const tags = (r.tags || []).map(tagById).filter(Boolean).map((t) => `<span class="tagpill" style="background:${esc(t.color)}">${esc(t.name)}</span>`).join('');
       const prev = r.typing && r.typing.length ? `<span class="prev typing">typing...</span>` : `<span class="prev">${esc(r.lastPreview)}</span>`;
-      return `<div class="room ${r.id === S.current ? 'on' : ''} ${r.unread ? 'has-unread' : ''}" data-room="${esc(r.id)}">
+      return `<div class="room ${r.id === S.current ? 'on' : ''} ${r.unread ? 'has-unread' : ''}" data-room="${esc(r.id)}" draggable="true">
         ${avatarHtml(r.name, r.avatar, r.network)}
         <div class="meta">
           <div class="top"><span class="name">${r.pinned ? '<span class="pin">📌</span> ' : ''}${esc(r.name)}</span><span class="time">${timeShort(r.lastTs)}</span></div>
@@ -185,14 +250,58 @@ $('#rooms').addEventListener('click', (e) => {
   const r = e.target.closest('[data-room]');
   if (r) openRoom(r.dataset.room, r.dataset.jump);
 });
-$('#rooms').addEventListener('contextmenu', async (e) => {
+$('#rooms').addEventListener('dragstart', (e) => {
   const r = e.target.closest('[data-room]');
-  if (!r) return;
+  if (r) { e.dataTransfer.setData('text/room', r.dataset.room); e.dataTransfer.effectAllowed = 'copy'; }
+});
+// Right-click menu: folders, pin, archive, hide
+$('#rooms').addEventListener('contextmenu', (e) => {
+  const el = e.target.closest('[data-room]');
+  if (!el) return;
   e.preventDefault();
-  const room = S.rooms.get(r.dataset.room);
+  const room = S.rooms.get(el.dataset.room);
   if (!room) return;
-  await call('roomSettings', room.id, { pinned: !room.pinned });
-  toast(room.pinned ? 'Unpinned' : 'Pinned');
+  const menu = $('#ctxMenu');
+  menu.innerHTML = `<div class="ctx-title">Folders</div>
+    ${(S.st.tags || []).map((t) => `<label class="ctx-item"><input type="checkbox" data-ctxtag="${esc(t.id)}" ${(room.tags || []).includes(t.id) ? 'checked' : ''}><span class="netdot" style="background:${esc(t.color)}"></span>${esc(t.name)}</label>`).join('')}
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" data-ctx="pin">${room.pinned ? 'Unpin' : 'Pin'}</div>
+    <div class="ctx-item" data-ctx="archive">${room.archived ? 'Unarchive' : 'Archive'}</div>
+    <div class="ctx-item" data-ctx="unread">Mark unread</div>
+    <div class="ctx-item" data-ctx="stash">${room.stash ? 'Unhide' : 'Hide chat 🔒'}</div>`;
+  menu.dataset.room = room.id;
+  menu.classList.remove('hidden');
+  const x = Math.min(e.clientX, window.innerWidth - 230), y = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('#ctxMenu')) $('#ctxMenu').classList.add('hidden'); });
+$('#ctxMenu').addEventListener('change', async (e) => {
+  const id = $('#ctxMenu').dataset.room;
+  const room = S.rooms.get(id);
+  const t = e.target.dataset.ctxtag;
+  if (!room || !t) return;
+  const tags = e.target.checked ? [...new Set([...(room.tags || []), t])] : (room.tags || []).filter((x) => x !== t);
+  await call('roomSettings', id, { tags });
+});
+$('#ctxMenu').addEventListener('click', async (e) => {
+  const a = e.target.closest('[data-ctx]');
+  if (!a) return;
+  const id = $('#ctxMenu').dataset.room;
+  const room = S.rooms.get(id);
+  $('#ctxMenu').classList.add('hidden');
+  if (!room) return;
+  if (a.dataset.ctx === 'pin') await call('roomSettings', id, { pinned: !room.pinned });
+  if (a.dataset.ctx === 'archive') await call('roomSettings', id, { archived: !room.archived });
+  if (a.dataset.ctx === 'unread') await call('markUnread', id);
+  if (a.dataset.ctx === 'stash') { await call('roomSettings', id, { stash: !room.stash }); toast(room.stash ? 'Chat moved back to the inbox' : 'Chat hidden. Find it under Folders → Hidden'); }
+});
+$('#subChips').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-sub]');
+  if (!b) return;
+  if (b.dataset.sub === 'net') S.filter.subNet = b.dataset.v || null;
+  else S.filter.subTag = b.dataset.v || null;
+  renderRooms();
 });
 $('#filterChips').addEventListener('click', (e) => {
   const b = e.target.closest('[data-f]');
@@ -492,9 +601,9 @@ function renderDrawer() {
       <div class="small" style="margin-top:6px">With ghost read on, they only see "Seen" when you press this or reply.</div>
     </div>
     <div class="sect"><label>Organise</label>
-      <div class="btns"><button class="ghost-btn" id="dPin">${r.pinned ? 'Unpin' : 'Pin'}</button><button class="ghost-btn" id="dArch">${r.archived ? 'Unarchive' : 'Archive'}</button><button class="ghost-btn" id="dUnread">Mark unread</button></div>
+      <div class="btns"><button class="ghost-btn" id="dStash">${r.stash ? 'Unhide' : 'Hide chat 🔒'}</button><button class="ghost-btn" id="dPin">${r.pinned ? 'Unpin' : 'Pin'}</button><button class="ghost-btn" id="dArch">${r.archived ? 'Unarchive' : 'Archive'}</button><button class="ghost-btn" id="dUnread">Mark unread</button></div>
     </div>
-    <div class="sect"><label>Tags</label><div class="tagsel" id="dTags">${(S.st.tags || []).map((t) => `<button data-tag="${esc(t.id)}" class="${(r.tags || []).includes(t.id) ? 'on' : ''}" style="${(r.tags || []).includes(t.id) ? `background:${esc(t.color)};border-color:${esc(t.color)}` : ''}">${esc(t.name)}</button>`).join('')}</div></div>
+    <div class="sect"><label>Folders</label><div class="tagsel" id="dTags">${(S.st.tags || []).map((t) => `<button data-tag="${esc(t.id)}" class="${(r.tags || []).includes(t.id) ? 'on' : ''}" style="${(r.tags || []).includes(t.id) ? `background:${esc(t.color)};border-color:${esc(t.color)}` : ''}">${esc(t.name)}</button>`).join('')}</div></div>
     <div class="sect"><label>Notes (only you see these)</label><textarea id="dNote" placeholder="e.g. client since March, prefers voice notes">${esc(r.note)}</textarea></div>
     <div class="sect"><label>Export chat</label><div class="btns"><button class="ghost-btn" data-exp="txt">Text</button><button class="ghost-btn" data-exp="csv">CSV</button><button class="ghost-btn" data-exp="json">JSON</button></div></div>`;
   $('#dGhost').value = tri(r.ghost);
@@ -515,6 +624,7 @@ $('#drawer').addEventListener('click', async (e) => {
   try {
     if (e.target.id === 'dMarkRead') { await call('markReadOnPlatform', r.id); toast('Marked as read on ' + netLabel(r.network)); }
     if (e.target.id === 'dPin') await call('roomSettings', r.id, { pinned: !r.pinned });
+    if (e.target.id === 'dStash') { await call('roomSettings', r.id, { stash: !r.stash }); toast(r.stash ? 'Chat moved back to the inbox' : 'Chat hidden. Find it under Folders → Hidden'); }
     if (e.target.id === 'dArch') await call('roomSettings', r.id, { archived: !r.archived });
     if (e.target.id === 'dUnread') { await call('markUnread', r.id); S.current = null; $('#chatBox').classList.add('hidden'); $('#chatEmpty').classList.remove('hidden'); call('focusRoom', null); S.drawer = false; renderDrawer(); }
     const tb = e.target.closest('[data-tag]');
@@ -705,7 +815,7 @@ function panelScheduled() {
 
 function panelAutomation() {
   const accs = S.st.accounts || [];
-  return `<h1>Automation</h1><div class="sub">Quick replies, auto-replies and tags for managing client inboxes.</div>
+  return `<h1>Automation</h1><div class="sub">Quick replies, auto-replies and folders for managing your inboxes.</div>
     <div class="card"><h3>Quick replies</h3><div class="small" style="margin-bottom:8px">Type <b>/</b> in any chat to use them.</div>
       <table class="list" id="qrTable"><tr><th style="width:160px">Shortcut</th><th>Text</th><th></th></tr>
       ${(S.st.quickReplies || []).map((q, i) => `<tr data-i="${i}"><td><input data-k="shortcut" value="${esc(q.shortcut)}" style="width:100%"></td><td><textarea data-k="text" rows="2" style="width:100%">${esc(q.text)}</textarea></td><td><button class="danger-btn" data-delqr="${i}">×</button></td></tr>`).join('')}
@@ -725,9 +835,9 @@ function panelAutomation() {
       </div>`).join('') || '<div class="small">No auto-replies.</div>'}
       <div class="btns" style="margin-top:10px"><button class="ghost-btn" id="addAr">Add rule</button><button class="primary" id="saveAr">Save auto-replies</button></div></div>
 
-    <div class="card"><h3>Tags</h3><table class="list" id="tagTable"><tr><th>Name</th><th style="width:90px">Colour</th><th></th></tr>
+    <div class="card"><h3>Folders</h3><div class="small" style="margin-bottom:8px">Sort chats from any app into folders such as Personal, Business or Church. A chat can be in more than one folder. Add chats by right-clicking them, dragging them onto a folder, or from the chat's info panel. To file new chats from an account automatically, use Accounts → Edit.</div><table class="list" id="tagTable"><tr><th>Name</th><th style="width:90px">Colour</th><th></th></tr>
       ${(S.st.tags || []).map((t, i) => `<tr data-i="${i}"><td><input data-k="name" value="${esc(t.name)}" style="width:100%"></td><td><input data-k="color" type="color" value="${esc(t.color)}" style="padding:2px;height:34px;width:60px"></td><td><button class="danger-btn" data-deltag="${i}">×</button></td></tr>`).join('')}
-      </table><div class="btns" style="margin-top:10px"><button class="ghost-btn" id="addTag">Add tag</button><button class="primary" id="saveTag">Save tags</button></div></div>`;
+      </table><div class="btns" style="margin-top:10px"><button class="ghost-btn" id="addTag">Add folder</button><button class="primary" id="saveTag">Save folders</button></div></div>`;
 }
 function readQr() {
   return [...document.querySelectorAll('#qrTable tr[data-i]')].map((tr, i) => ({ id: (S.st.quickReplies[i] || {}).id || Math.random().toString(36).slice(2), shortcut: tr.querySelector('[data-k=shortcut]').value.trim().replace(/^\//, ''), text: tr.querySelector('[data-k=text]').value })).filter((q) => q.shortcut && q.text);
@@ -764,6 +874,14 @@ function panelSettings() {
       ${sw('tricksterEnabled', 'Connect to Trickster', 'Off: Switchboard uses its own login window and browser for each account. On: you can link an account to a Trickster profile, and its login and Instagram posting run inside that profile.')}
       <label class="field"><span>Trickster local API address</span><input data-set="tricksterApi" value="${esc(s.tricksterApi)}"></label>
       ${sw('closeTricksterAfter', 'Close the Trickster profile afterwards if Switchboard opened it')}
+    </div>
+    <div class="card"><h3>Hidden chats</h3>
+      <div class="small" style="margin-bottom:8px">Hidden chats only appear under Folders → Hidden. They don't count as unread anywhere else.</div>
+      ${sw('muteHidden', 'Mute notifications from hidden chats')}
+      <div class="row"><input id="hidePinNew" type="password" inputmode="numeric" placeholder="${s.hiddenPinSet ? 'Passcode is set. Type a new one to change it' : 'Optional passcode to open Hidden'}" class="grow"><button class="ghost-btn" id="savePin">Set passcode</button>${s.hiddenPinSet ? '<button class="danger-btn" id="clearPin">Remove</button>' : ''}</div>
+    </div>
+    <div class="card"><h3>Messenger</h3>
+      ${sw('messengerEncryptedHistory', 'Load encrypted chat history', 'Most Messenger chats are end-to-end encrypted. To load their history, Switchboard asks for your 6-digit Messenger backup PIN when you log in. Without it, only older non-encrypted chats show until a new message arrives. Changing this restarts Messenger accounts.')}
     </div>
     <div class="card"><h3>History</h3>
       <label class="field"><span>Messages to load per chat when an account is first connected</span><input data-set="backfillMessages" type="number" min="0" max="2000" value="${esc(s.backfillMessages || 200)}"></label>
@@ -858,7 +976,7 @@ $('#panel').addEventListener('click', async (e) => {
     if (t.id === 'addAr') { S.st.autoReplies = [...readAr(), { id: Math.random().toString(36).slice(2), name: 'After hours', enabled: false, keywords: '', cooldownMin: 240, text: "Thanks for your message! We're away right now and will reply first thing tomorrow.", hours: { on: true, from: '17:00', to: '09:00' }, accountIds: [] }]; renderPanel(); }
     if (t.dataset.delar !== undefined) { const l = readAr(); l.splice(+t.dataset.delar, 1); S.st.autoReplies = l; renderPanel(); }
     if (t.id === 'saveAr') { S.st.autoReplies = await call('saveList', 'autoReplies', readAr()); toast('Saved'); }
-    if (t.id === 'addTag') { S.st.tags = [...readTags(), { id: Math.random().toString(36).slice(2), name: 'New tag', color: '#7c5cff' }]; renderPanel(); }
+    if (t.id === 'addTag') { S.st.tags = [...readTags(), { id: Math.random().toString(36).slice(2), name: 'New folder', color: '#7c5cff' }]; renderPanel(); }
     if (t.dataset.deltag !== undefined) { const l = readTags(); l.splice(+t.dataset.deltag, 1); S.st.tags = l; renderPanel(); }
     if (t.id === 'saveTag') { S.st.tags = await call('saveList', 'tags', readTags()); toast('Saved'); renderRail(); renderRooms(); }
     // settings
@@ -870,6 +988,15 @@ $('#panel').addEventListener('click', async (e) => {
       renderPanel();
     }
     if (t.id === 'openData') call('dataFolder');
+    if (t.id === 'savePin') {
+      const v = $('#hidePinNew').value.trim();
+      if (v.length < 4) return toast('Use at least 4 characters', true);
+      S.st.settings = await call('setHiddenPin', v);
+      S.hiddenUnlocked = false;
+      toast('Passcode set');
+      renderPanel();
+    }
+    if (t.id === 'clearPin') { S.st.settings = await call('setHiddenPin', ''); toast('Passcode removed'); renderPanel(); }
   } catch (er) {
     if (S.modalLog === false && !$('#modal').classList.contains('hidden') && $('#mLog')) $('#mLog').textContent += '\nError: ' + er.message;
     toast(er.message, true);
@@ -887,12 +1014,14 @@ function editAccount(id) {
     <label class="field"><span>Name</span><input id="eLabel" value="${esc(a.label)}"></label>
     <label class="field"><span>Proxy</span><input id="eProxy" value="${esc(a.proxy || '')}" placeholder="http://user:pass@host:port"></label>
     ${S.st.settings.tricksterEnabled ? `<label class="field"><span>Trickster profile ID (empty = Switchboard's own login)</span><input id="eTrick" value="${esc(a.tricksterProfileId || '')}"></label>` : ''}
-    <div class="small">Changing the proxy restarts this account's bridge.</div>
+    <div class="field"><span>Put new chats from this account in</span><div class="tagsel">${(S.st.tags || []).map((t) => `<label class="small" style="display:flex;gap:4px;align-items:center;margin-right:10px"><input type="checkbox" data-deffolder="${esc(t.id)}" ${(a.defaultFolders || []).includes(t.id) ? 'checked' : ''}> ${esc(t.name)}</label>`).join('')}</div>
+      <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="eApplyOld"> Also put this account's existing chats that have no folder there</label></div>
+    <div class="small">Changing the proxy restarts this account's engine.</div>
     <div class="modal-foot"><button class="ghost-btn" data-close>Cancel</button><button class="primary" id="eSave">Save</button></div>`);
   $('#eSave').onclick = async () => {
     $('#eSave').disabled = true;
     try {
-      await call('updateAccount', id, { label: $('#eLabel').value.trim(), proxy: $('#eProxy').value.trim(), ...($('#eTrick') ? { tricksterProfileId: $('#eTrick').value.trim() || null } : {}) });
+      await call('updateAccount', id, { label: $('#eLabel').value.trim(), proxy: $('#eProxy').value.trim(), ...($('#eTrick') ? { tricksterProfileId: $('#eTrick').value.trim() || null } : {}), defaultFolders: [...document.querySelectorAll('[data-deffolder]:checked')].map((c) => c.dataset.deffolder), applyFoldersToExisting: $('#eApplyOld').checked });
       closeModal(); await refreshState(); toast('Saved');
     } catch (e) { toast(e.message, true); $('#eSave').disabled = false; }
   };
@@ -940,7 +1069,7 @@ window.sb.on('login-ask', (q) => {
   const box = $('#lBody') || $('#modalCard');
   box.innerHTML = `${q.instructions ? `<p class="small">${esc(q.instructions)}</p>` : ''}${fields.map((f) => f.type === 'cookies_paste'
     ? `<label class="field"><span>${esc(f.name)}</span><textarea data-f="${esc(f.id)}" rows="7"></textarea></label>`
-    : `<label class="field"><span>${esc(f.name || f.id)}${f.description ? ` <span class="small">${esc(f.description)}</span>` : ''}</span><input data-f="${esc(f.id)}" type="${f.type === 'password' ? 'password' : 'text'}" placeholder="${esc(f.placeholder || '')}"></label>`).join('')}
+    : `<label class="field"><span>${esc(f.name || f.id)}${f.description ? ` <span class="small">${esc(f.description)}</span>` : ''}${f.optional ? ' <span class="small">(optional, leave empty to skip)</span>' : ''}</span><input data-f="${esc(f.id)}" type="${f.type === 'password' ? 'password' : 'text'}" placeholder="${esc(f.placeholder || '')}"></label>`).join('')}
     <div class="modal-foot"><button class="ghost-btn" id="askCancel">Cancel</button><button class="primary" id="askOk">Continue</button></div>`;
   $('#askOk').onclick = () => {
     const ans = {};

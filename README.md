@@ -18,7 +18,10 @@ One inbox for WhatsApp, Messenger and Instagram on your PC, plus quiet posting t
   - *Facebook posts*: Public, Friends, Friends except..., Specific friends..., or Only me. Facebook has no "quiet" option, so the audience is how you keep a post low-key. Page posts are public.
   - *Facebook stories*: Public, Friends, or Custom (chosen people). Photos only, because Facebook's website doesn't take video stories.
   - Facebook posting uses your *Facebook / Messenger* accounts, which share the same Facebook login. Add Pages by pasting their link under *Post as → Add a Page*.
-- **Agency tools**: quick replies (type `/`), auto-replies (keywords, hours, cooldown, per account), tags, private notes per chat, send later, and chat export (TXT/CSV/JSON).
+- **Folders across every app**: sort chats from WhatsApp, Messenger and Instagram into folders like Personal, Business and Church (a chat can be in several). Right-click a chat, drag it onto a folder, or use its info panel. Inside a folder you can narrow by app, and inside an app you can narrow by folder. Accounts can file their new chats into a folder automatically (*Accounts → Edit*).
+- **Hidden chats**: hide a chat and it disappears from every list and unread count, showing only under *Folders → Hidden*, with an optional passcode and muted notifications.
+- **Messenger encrypted history**: most Messenger chats are end-to-end encrypted. When you log in, Switchboard asks for your 6-digit Messenger backup PIN so it can load their history.
+- **Agency tools**: quick replies (type `/`), auto-replies (keywords, hours, cooldown, per account), private notes per chat, send later, and chat export (TXT/CSV/JSON).
 - Replies, reactions, editing and unsending your own messages, files, photos, video and voice notes, drag and drop.
 
 ## Download
