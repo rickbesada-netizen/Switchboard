@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
-const EVENTS = ['log', 'stack-status', 'sync-status', 'room', 'msg', 'state', 'accounts', 'schedule', 'login-step', 'login-ask', 'open-room', 'ig-log'];
+const EVENTS = ['log', 'stack-status', 'sync-status', 'room', 'msg', 'state', 'accounts', 'schedule', 'login-step', 'login-ask', 'open-room', 'ig-log', 'update', 'remote-info', 'msg-failed'];
 
 contextBridge.exposeInMainWorld('sb', {
   call: async (ch, ...args) => {

@@ -9,12 +9,14 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win portable"
+    "dist": "electron-builder --win nsis"
   },
   "dependencies": {
     "playwright-core": "^1.49.0",
     "qrcode": "^1.5.4",
-    "yaml": "^2.6.1"
+    "yaml": "^2.6.1",
+    "electron-updater": "^6.8.11",
+    "ws": "^8.23.0"
   },
   "devDependencies": {
     "electron": "^33.2.1",
@@ -32,11 +34,8 @@
       "package.json"
     ],
     "win": {
-      "target": "portable",
+      "target": "nsis",
       "icon": "assets/icon.png"
-    },
-    "portable": {
-      "artifactName": "Switchboard.exe"
     },
     "asarUnpack": [
       "node_modules/playwright-core/**"
@@ -48,6 +47,23 @@
         "filter": [
           "engine.exe"
         ]
+      }
+    ],
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Switchboard",
+      "runAfterFinish": true,
+      "artifactName": "Switchboard-Setup.exe",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "rickbesada-netizen",
+        "repo": "Switchboard"
       }
     ]
   },

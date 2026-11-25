@@ -10,6 +10,8 @@ const { Engine } = require('./src/engine');
 const { parseCookieText, fillCookieFields } = require('./src/bridges');
 const trickster = require('./src/trickster');
 const social = require('./src/social');
+const { Remote } = require('./src/remote');
+const os = require('os');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'sbmedia', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } },
@@ -33,8 +35,11 @@ let booting = null;
 
 const ICON = path.join(__dirname, 'assets', 'icon.png');
 
+const handlers = new Map(); // every action, shared by the desktop window and paired phones
+let remote = null;
 function send(ch, ...args) {
   if (win && !win.isDestroyed()) win.webContents.send(ch, ...args);
+  if (remote) remote.broadcast(ch, args);
 }
 function log(msg) {
   send('log', msg);
@@ -271,13 +276,17 @@ function onEvent(roomId, res, { live, catchup, since }) {
 }
 
 function notify(r, m) {
-  if (!cfg.settings.notifications || !Notification.isSupported()) return;
   if (r.stash && cfg.settings.muteHidden !== false) return;
-  if (win && win.isFocused() && focusedRoom === r.id) return;
   const acc = roomAccount(r);
+  const title = `${roomName(r)}${acc ? ' · ' + NETWORKS[acc.network].label : ''}`;
+  const body = (r.members[m.sender] && others(r).length > 1 ? memberName(r, m.sender) + ': ' : '') + preview(m);
+  const pcActive = win && win.isVisible() && win.isFocused();
+  if (remote && cfg.settings.phoneNotifications !== false && !pcActive) remote.broadcast('notify', [{ title, body, roomId: r.id }]);
+  if (win && win.isFocused() && focusedRoom === r.id) return;
+  if (!cfg.settings.notifications || !Notification.isSupported()) return;
   const n = new Notification({
-    title: `${roomName(r)}${acc ? ' · ' + NETWORKS[acc.network].label : ''}`,
-    body: (r.members[m.sender] && others(r).length > 1 ? memberName(r, m.sender) + ': ' : '') + preview(m),
+    title,
+    body,
     icon: ICON,
     silent: false,
   });
@@ -534,8 +543,9 @@ function showWindow() {
   if (win.isMinimized()) win.restore();
   win.focus();
 }
-function createWindow() {
+function createWindow(hidden) {
   win = new BrowserWindow({
+    show: !hidden,
     width: 1360, height: 860, minWidth: 980, minHeight: 600,
     backgroundColor: '#0d0f14', title: 'Switchboard', icon: ICON,
     autoHideMenuBar: true,
@@ -561,8 +571,40 @@ function createTray() {
   tray.on('click', showWindow);
 }
 
+// ---------------------------------------------------------------- updates (GitHub releases)
+let updateState = { state: 'idle' };
+function setUpdate(st) {
+  updateState = { ...updateState, ...st };
+  send('update', updateState);
+}
+function setupUpdater() {
+  if (!app.isPackaged) { updateState = { state: 'dev' }; return; }
+  let autoUpdater;
+  try { autoUpdater = require('electron-updater').autoUpdater; } catch (e) { log('Updater unavailable: ' + e.message); return; }
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('checking-for-update', () => setUpdate({ state: 'checking' }));
+  autoUpdater.on('update-available', (i) => { setUpdate({ state: 'downloading', version: i.version, percent: 0 }); log(`Update ${i.version} found, downloading`); });
+  autoUpdater.on('update-not-available', () => setUpdate({ state: 'latest', checkedAt: Date.now() }));
+  autoUpdater.on('download-progress', (p) => setUpdate({ state: 'downloading', percent: Math.round(p.percent || 0) }));
+  autoUpdater.on('update-downloaded', (i) => {
+    setUpdate({ state: 'ready', version: i.version });
+    log(`Update ${i.version} ready. Restart Switchboard to install it.`);
+    if (Notification.isSupported()) new Notification({ title: 'Switchboard update ready', body: `Version ${i.version} is ready. Click Restart to update in Switchboard.`, icon: ICON }).show();
+  });
+  autoUpdater.on('error', (e) => setUpdate({ state: 'error', error: String(e && e.message || e).split('\n')[0] }));
+  global.__updater = autoUpdater;
+  setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 15000);
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 3 * 3600 * 1000);
+}
+function applyLoginItem() {
+  if (!app.isPackaged || process.platform !== 'win32') return;
+  try { app.setLoginItemSettings({ openAtLogin: cfg.settings.startWithWindows !== false, args: ['--hidden'] }); } catch {}
+}
+
 // ---------------------------------------------------------------- IPC
 function handle(ch, fn) {
+  handlers.set(ch, fn);
   ipcMain.handle(ch, async (e, ...args) => {
     try { return { ok: true, data: await fn(...args) }; } catch (err) { return { ok: false, error: err.message, screenshot: err.screenshot, code: err.code }; }
   });
@@ -571,6 +613,36 @@ function handle(ch, fn) {
 function setupIpc() {
   handle('state', () => state());
   handle('boot', () => boot());
+  handle('appInfo', () => ({ version: app.getVersion(), packaged: app.isPackaged, update: updateState, hostname: os.hostname() }));
+  handle('checkUpdates', async () => {
+    if (!global.__updater) return { state: app.isPackaged ? 'error' : 'dev', error: 'Updates only work in the installed app' };
+    await global.__updater.checkForUpdates();
+    return updateState;
+  });
+  handle('installUpdate', async () => {
+    if (!global.__updater || updateState.state !== 'ready') throw new Error('No update ready yet');
+    quitting = true;
+    store.flush();
+    cfg.save(true);
+    await engine.stopAll();
+    global.__updater.quitAndInstall(true, true);
+    return true;
+  });
+  handle('remoteInfo', () => remote.info());
+  handle('remoteEnable', (on) => {
+    cfg.settings.phoneAccess = !!on;
+    cfg.save(true);
+    if (on) remote.start(); else remote.stop();
+    return remote.info();
+  });
+  handle('remoteNewPairing', async () => {
+    if (!remote.running) { cfg.settings.phoneAccess = true; cfg.save(true); remote.start(); }
+    const { payload } = remote.newPairing();
+    if (win && !win.isDestroyed()) win.webContents.send('remote-info', remote.info());
+    const text = JSON.stringify(payload);
+    return { qr: await QRCode.toDataURL(text, { margin: 1, width: 360, errorCorrectionLevel: 'M' }), payload, text };
+  });
+  handle('remoteRevoke', (id) => { remote.revoke(id); return remote.info(); });
   handle('restartEngines', async () => { for (const a of cfg.accounts) await engine.restartAccount(a); return true; });
   handle('stackLogs', () => tailFile(U.p('logs', 'switchboard.log')));
   handle('openExternal', (url) => shell.openExternal(url));
@@ -766,6 +838,7 @@ function setupIpc() {
     delete patch.hiddenPinSet;
     const historyChanged = 'messengerEncryptedHistory' in patch && patch.messengerEncryptedHistory !== cfg.settings.messengerEncryptedHistory;
     Object.assign(cfg.settings, patch);
+    if ('startWithWindows' in patch) applyLoginItem();
     if (historyChanged) for (const a of cfg.accounts) if (a.network === 'messenger') engine.restartAccount(a).catch(() => {});
     cfg.save(true);
     for (const r of Object.values(store.rooms)) pushRoom(r.id);
@@ -819,7 +892,7 @@ function setupIpc() {
 
 // ---------------------------------------------------------------- app start
 app.on('second-instance', () => showWindow());
-app.on('before-quit', () => { quitting = true; store && store.flush(); cfg && cfg.save(true); if (engine) for (const p of Object.values(engine.procs)) { p.stopping = true; try { p.child && p.child.stdin.write(JSON.stringify({ id: 0, cmd: 'quit' }) + '\n'); } catch {} } });
+app.on('before-quit', () => { quitting = true; try { remote && remote.stop(); } catch {} store && store.flush(); cfg && cfg.save(true); if (engine) for (const p of Object.values(engine.procs)) { p.stopping = true; try { p.child && p.child.stdin.write(JSON.stringify({ id: 0, cmd: 'quit' }) + '\n'); } catch {} } });
 app.on('window-all-closed', () => { if (!cfg || !cfg.settings.minimizeToTray) app.quit(); });
 
 app.whenReady().then(async () => {
@@ -886,8 +959,12 @@ app.whenReady().then(async () => {
   });
 
   setupIpc();
-  createWindow();
+  createWindow(process.argv.includes('--hidden'));
   createTray();
+  applyLoginItem();
+  setupUpdater();
+  remote = new Remote({ cfg, handlers, mediaFile: (mxc) => engine.mediaFile(mxc), log, root: __dirname, onChange: () => { if (win && !win.isDestroyed()) win.webContents.send('remote-info', remote.info()); } });
+  if (cfg.settings.phoneAccess) remote.start();
   startScheduler();
   setInterval(() => { for (const a of cfg.accounts) refreshAccount(a).catch(() => {}); }, 120000);
 

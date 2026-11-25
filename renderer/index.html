@@ -2,11 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' sbmedia: data:; media-src 'self' sbmedia:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>Switchboard</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div id="mobileBar"><button class="icon-btn" id="menuBtn">☰</button><span id="mobileTitle">Switchboard</span></div>
+  <div id="menuShade"></div>
   <div id="app">
     <nav id="rail">
       <div class="brand"><img src="../assets/icon.png" alt="" /><span>Switchboard</span></div>
@@ -16,6 +19,7 @@
       <div class="rail-sep">Folders</div>
       <div class="rail-group" id="railTags"></div>
       <div class="rail-bottom">
+        <button class="update-pill hidden" id="updatePill"></button>
         <div class="engine" id="engineStatus"><span class="dot"></span><span class="txt">Engine stopped</span></div>
       </div>
     </nav>

@@ -1,4 +1,5 @@
-/* Switchboard renderer */
+/* Switchboard renderer (desktop window, and phones via the PC's phone access) */
+const REMOTE = !!window.SB_REMOTE;
 const S = {
   st: null,
   view: 'inbox',
@@ -26,6 +27,7 @@ const netLabel = (n) => (NETS()[n] || {}).label || n || '';
 function mxc(u, thumb) {
   if (!u || !String(u).startsWith('mxc://')) return null;
   const [s, id] = u.slice(6).split('/');
+  if (REMOTE) return `/media/${encodeURIComponent(s)}/${encodeURIComponent(id)}?t=${encodeURIComponent(window.SB_TOKEN)}`;
   return `sbmedia://media/${encodeURIComponent(s)}/${encodeURIComponent(id)}${thumb ? '?thumb=1' : ''}`;
 }
 function linkify(t) {
@@ -168,8 +170,15 @@ $('#rail').addEventListener('drop', (e) => {
   if (id) addToFolder(id, t.dataset.drop).then(renderRail);
 });
 
+$('#menuBtn').addEventListener('click', () => document.body.classList.toggle('menu-open'));
+$('#menuShade').addEventListener('click', () => document.body.classList.remove('menu-open'));
 function showView(v) {
   S.view = v;
+  document.body.classList.remove('menu-open');
+  if (v !== 'inbox') document.body.classList.remove('chat-open');
+  if (v === 'settings') S.remoteFetched = false;
+  const titles = { inbox: 'Chats', post: 'Post', scheduled: 'Scheduled', automation: 'Automation', accounts: 'Accounts', settings: 'Settings', engine: 'Engine' };
+  if ($('#mobileTitle')) $('#mobileTitle').textContent = titles[v] || 'Switchboard';
   $('#inboxView').classList.toggle('hidden', v !== 'inbox');
   $('#panelView').classList.toggle('hidden', v === 'inbox');
   if (v === 'inbox') renderRooms();
@@ -323,9 +332,18 @@ $('#search').addEventListener('input', (e) => {
 });
 
 // ------------------------------------------------------------------ chat
+function closeChatMobile() {
+  document.body.classList.remove('chat-open');
+  S.drawer = false;
+  renderDrawer();
+  call('focusRoom', null).catch(() => {});
+  S.current = null;
+  renderRooms();
+}
 async function openRoom(id, jumpTo) {
   if (S.view !== 'inbox') showView('inbox');
   S.current = id;
+  document.body.classList.add('chat-open');
   S.replyTo = null;
   S.editing = null;
   renderReply();
@@ -347,10 +365,10 @@ function renderHead() {
   const r = curRoom();
   if (!r) return;
   const acc = account(r.accountId);
-  $('#chatHead').innerHTML = `${avatarHtml(r.name, r.avatar, r.network, 38)}
+  $('#chatHead').innerHTML = `<button class="icon-btn mobile-only" id="backBtn">←</button>${avatarHtml(r.name, r.avatar, r.network, 38)}
     <div class="title"><b>${esc(r.name)}</b><span>${esc(netLabel(r.network))}${acc ? ' · ' + esc(acc.label) : ''}${r.isGroup ? ' · group' : ''}</span></div>
-    <button class="toggle ${r.ghostEffective ? 'on' : ''}" id="ghostTgl" title="Ghost read: read without sending 'Seen'">👻 Ghost ${r.ghostEffective ? 'on' : 'off'}</button>
-    <button class="toggle ${r.hideTypingEffective ? 'on' : ''}" id="typTgl" title="Hide that you're typing">⌨ ${r.hideTypingEffective ? 'Typing hidden' : 'Typing shown'}</button>
+    <button class="toggle ${r.ghostEffective ? 'on' : ''}" id="ghostTgl" title="Ghost read: read without sending 'Seen'">👻<span class="tl"> Ghost ${r.ghostEffective ? 'on' : 'off'}</span></button>
+    <button class="toggle ${r.hideTypingEffective ? 'on' : ''}" id="typTgl" title="Hide that you're typing">⌨<span class="tl"> ${r.hideTypingEffective ? 'Typing hidden' : 'Typing shown'}</span></button>
     <button class="icon-btn" id="drawerBtn" title="Chat info">ⓘ</button>`;
 }
 $('#chatHead').addEventListener('click', async (e) => {
@@ -362,6 +380,7 @@ $('#chatHead').addEventListener('click', async (e) => {
   }
   if (e.target.closest('#typTgl')) await call('roomSettings', r.id, { hideTyping: !r.hideTypingEffective });
   if (e.target.closest('#drawerBtn')) { S.drawer = !S.drawer; renderDrawer(); }
+  if (e.target.closest('#backBtn')) closeChatMobile();
 });
 
 function mediaHtml(m) {
@@ -455,7 +474,11 @@ $('#messages').addEventListener('click', async (e) => {
   const img = e.target.closest('img.media');
   if (img) { $('#lightbox').innerHTML = `<img src="${img.dataset.full}">`; $('#lightbox').classList.remove('hidden'); return; }
   const fileEl = e.target.closest('[data-save]');
-  if (fileEl) { call('saveMedia', fileEl.dataset.save, fileEl.dataset.name).catch((er) => toast(er.message, true)); return; }
+  if (fileEl) {
+    if (REMOTE) { window.open(mxc(fileEl.dataset.save), '_blank'); return; }
+    call('saveMedia', fileEl.dataset.save, fileEl.dataset.name).catch((er) => toast(er.message, true));
+    return;
+  }
   const j = e.target.closest('[data-jump]');
   if (j) return jump(j.dataset.jump);
   const h = e.target.closest('[data-hist]');
@@ -550,13 +573,19 @@ async function sendNow() {
 }
 $('#attachBtn').addEventListener('click', async () => {
   if (!S.current) return;
+  if (REMOTE) {
+    const room = S.current;
+    const paths = await window.sbPickFiles('', true).catch((e) => { toast(e.message, true); return []; });
+    if (paths.length) { toast('Sending...'); try { await call('sendFilePaths', room, paths); toast('Sent'); } catch (e) { toast(e.message, true); } }
+    return;
+  }
   try { const n = await call('sendFiles', S.current); if (n) toast(`Sent ${n} file${n > 1 ? 's' : ''}`); } catch (e) { toast(e.message, true); }
 });
 $('#chat').addEventListener('dragover', (e) => e.preventDefault());
 $('#chat').addEventListener('drop', async (e) => {
   e.preventDefault();
   if (!S.current) return;
-  const paths = [...e.dataTransfer.files].map((f) => window.sb.filePath(f)).filter(Boolean);
+  const paths = REMOTE ? await Promise.all([...e.dataTransfer.files].map((f) => window.sbUpload(f))) : [...e.dataTransfer.files].map((f) => window.sb.filePath(f)).filter(Boolean);
   if (!paths.length) return;
   toast('Sending...');
   try { await call('sendFilePaths', S.current, paths); toast('Sent'); } catch (er) { toast(er.message, true); }
@@ -634,6 +663,7 @@ $('#drawer').addEventListener('click', async (e) => {
       await call('roomSettings', r.id, { tags });
     }
     const ex = e.target.closest('[data-exp]');
+    if (ex && REMOTE) return toast('Export chats from Switchboard on your PC', true);
     if (ex && (await call('exportChat', r.id, ex.dataset.exp))) toast('Exported');
   } catch (er) { toast(er.message, true); }
 });
@@ -641,6 +671,7 @@ $('#drawer').addEventListener('click', async (e) => {
 // ------------------------------------------------------------------ panels
 function renderPanel() {
   const p = $('#panel');
+  if (S.view === 'settings' && !REMOTE && !S.remoteFetched) { S.remoteFetched = true; S.remote = S.remote || {}; call('remoteInfo').then((r) => { S.remote = r; S.st.settings.phoneAccess = r.enabled; if (S.view === 'settings') renderPanel(); }).catch(() => {}); }
   const fn = { accounts: panelAccounts, post: panelPost, scheduled: panelScheduled, automation: panelAutomation, settings: panelSettings, engine: panelEngine }[S.view];
   p.innerHTML = fn ? fn() : '';
   if (S.view === 'post') renderIgFiles();
@@ -669,6 +700,10 @@ function accState(a) {
 }
 function panelAccounts() {
   const accs = S.st.accounts || [];
+  if (REMOTE) {
+    return `<h1>Accounts</h1><div class="sub">Accounts run on your PC. Add accounts and log them in there.</div>
+      <div class="card">${accs.map((a) => `<div class="acc">${avatarHtml(a.label, null, a.network, 34)}<div class="info"><b>${esc(a.label)}</b><span class="small">${esc(netLabel(a.network))}</span><div>${accState(a)}</div></div></div>`).join('') || '<div class="small">No accounts yet.</div>'}</div>`;
+  }
   return `<h1>Accounts</h1><div class="sub">Each account runs in its own built-in engine, with its own proxy, so client accounts never share an IP.</div>
     <div class="card"><h3>Connected</h3>
       ${accs.length ? accs.map((a) => `<div class="acc">${avatarHtml(a.label, null, a.network, 38)}
@@ -857,8 +892,32 @@ function readTags() {
   return [...document.querySelectorAll('#tagTable tr[data-i]')].map((tr, i) => ({ id: (S.st.tags[i] || {}).id || Math.random().toString(36).slice(2), name: tr.querySelector('[data-k=name]').value.trim(), color: tr.querySelector('[data-k=color]').value })).filter((t) => t.name);
 }
 
+function updateText(u) {
+  if (!u) return '';
+  return { checking: 'Checking for updates...', latest: 'You have the latest version.', downloading: `Downloading update ${u.version || ''}${u.percent ? ' (' + u.percent + '%)' : ''}...`, ready: `Version ${u.version} is ready to install.`, error: 'Could not check for updates: ' + (u.error || ''), dev: 'Updates are turned off when running from source.', idle: '' }[u.state] || '';
+}
+function panelAbout() {
+  const i = S.appInfo || {};
+  const u = S.update || i.update || {};
+  return `<div class="card"><h3>About and updates</h3>
+    <div class="row"><span class="grow">Switchboard <b>${esc(i.version || '')}</b>${REMOTE ? ' (on your PC)' : ''}<div class="small">${esc(updateText(u))}</div></span>
+    ${REMOTE ? '' : (u.state === 'ready' ? '<button class="primary" id="installUpd">Restart and update</button>' : '<button class="ghost-btn" id="checkUpd">Check for updates</button>')}</div>
+    ${REMOTE ? '' : '<div class="small">Switchboard checks for updates on its own every few hours and downloads them in the background.</div>'}</div>`;
+}
+function panelPhone() {
+  const r = S.remote || {};
+  const devs = r.devices || [];
+  return `<div class="card"><h3>Phone</h3>
+    <div class="small" style="margin-bottom:10px">Use all your accounts from the Switchboard Android app. Your accounts keep running on this PC; the phone connects to it. On the same Wi-Fi it works straight away. Away from home, install <a href="#" data-ext="https://tailscale.com/download">Tailscale</a> (free) on this PC and your phone and sign in to both with the same account.</div>
+    <div class="row"><label class="switch"><input type="checkbox" id="phoneToggle" ${S.st.settings.phoneAccess ? 'checked' : ''}><span></span></label><span class="grow">Allow phone access${r.running ? ` <span class="small">(on port ${r.port})</span>` : ''}</span></div>
+    <div class="row"><label class="switch"><input type="checkbox" data-set="phoneNotifications" ${S.st.settings.phoneNotifications !== false ? 'checked' : ''}><span></span></label><span class="grow">Send notifications to my phone when I'm not at the PC</span></div>
+    <div class="btns" style="margin:10px 0"><button class="primary" id="pairPhone">Pair a phone</button><button class="ghost-btn" data-ext="https://github.com/rickbesada-netizen/Switchboard/releases/latest/download/Switchboard.apk">Get the Android app</button></div>
+    ${devs.length ? `<table class="list"><tr><th>Paired phones</th><th>Last seen</th><th></th></tr>${devs.map((d) => `<tr><td>${esc(d.name)} ${d.online ? '<span class="state ok">connected</span>' : ''}</td><td class="small">${d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '-'}</td><td><button class="danger-btn" data-revoke="${esc(d.id)}">Remove</button></td></tr>`).join('')}</table>` : '<div class="small">No phones paired yet.</div>'}
+  </div>`;
+}
 function panelSettings() {
   const s = S.st.settings;
+  if (REMOTE) return `<h1>Settings</h1><div class="sub">Settings are changed in Switchboard on your PC.</div>${panelAbout()}`;
   const sw = (k, label, sub) => `<div class="row"><label class="switch"><input type="checkbox" data-set="${k}" ${s[k] ? 'checked' : ''}><span></span></label><div class="grow">${label}${sub ? `<div class="small">${sub}</div>` : ''}</div></div>`;
   return `<h1>Settings</h1><div class="sub">Defaults apply to every chat unless you change a chat in its info panel.</div>
     <div class="card"><h3>Privacy</h3>
@@ -866,7 +925,10 @@ function panelSettings() {
       ${sw('hideTyping', 'Hide typing', 'Never show "typing..." to the other person.')}
       ${sw('keepDeleted', 'Keep deleted messages', 'When someone unsends a message, keep your saved copy (shown with a red "Deleted by sender" label).')}
     </div>
+    ${panelAbout()}
+    ${panelPhone()}
     <div class="card"><h3>App</h3>
+      ${sw('startWithWindows', 'Start Switchboard when Windows starts', 'Opens quietly in the tray so your accounts are always connected.')}
       ${sw('notifications', 'Desktop notifications')}
       ${sw('minimizeToTray', 'Keep running in the tray when the window is closed', 'Needed for scheduled items, auto-replies and catching deleted messages.')}
     </div>
@@ -890,7 +952,14 @@ function panelSettings() {
 }
 
 // panel events
-$('#panel').addEventListener('change', (e) => {
+$('#panel').addEventListener('change', async (e) => {
+  if (e.target.id === 'phoneToggle') {
+    S.remote = await call('remoteEnable', e.target.checked);
+    S.st.settings.phoneAccess = e.target.checked;
+    toast(e.target.checked ? 'Phone access on. Windows may ask to allow Switchboard on your network: click Allow.' : 'Phone access off');
+    renderPanel();
+    return;
+  }
   if (S.view !== 'post') return;
   if (e.target.id === 'pAs' && e.target.value === '__add') { $('#addPageRow').classList.remove('hidden'); return; }
   if (['pAcc', 'pAs', 'pAud'].includes(e.target.id)) { readPostForm(); renderPanel(); }
@@ -930,7 +999,12 @@ $('#panel').addEventListener('click', async (e) => {
     if (t.id === 'refreshAcc') { S.st.accounts = await call('refreshAccounts'); renderPanel(); }
     // post
     if (t.dataset.kind) { readPostForm(); postState().kind = t.dataset.kind; renderPanel(); }
-    if (t.id === 'pPick') { readPostForm(); S.igFiles = [...S.igFiles, ...(await call('pickMedia'))]; renderIgFiles(); }
+    if (t.id === 'pPick') {
+      readPostForm();
+      const picked = REMOTE ? await window.sbPickFiles('image/*,video/*', true) : await call('pickMedia');
+      S.igFiles = [...S.igFiles, ...picked];
+      renderIgFiles();
+    }
     if (t.id === 'pClear') { S.igFiles = []; renderIgFiles(); }
     if (t.id === 'savePage') {
       const P = readPostForm();
@@ -988,6 +1062,10 @@ $('#panel').addEventListener('click', async (e) => {
       renderPanel();
     }
     if (t.id === 'openData') call('dataFolder');
+    if (t.id === 'checkUpd') { S.update = await call('checkUpdates'); renderPanel(); }
+    if (t.id === 'installUpd') { toast('Restarting to update...'); await call('installUpdate'); }
+    if (t.id === 'pairPhone') showPairing();
+    if (t.dataset.revoke) { S.remote = await call('remoteRevoke', t.dataset.revoke); renderPanel(); toast('Phone removed'); }
     if (t.id === 'savePin') {
       const v = $('#hidePinNew').value.trim();
       if (v.length < 4) return toast('Use at least 4 characters', true);
@@ -1002,6 +1080,37 @@ $('#panel').addEventListener('click', async (e) => {
     toast(er.message, true);
   }
 });
+
+async function showPairing() {
+  try {
+    const p = await call('remoteNewPairing');
+    S.remote = await call('remoteInfo');
+    const addrs = (S.remote.addresses || []).map((a) => `${a.url}${a.kind === 'tailscale' ? ' (Tailscale, works anywhere)' : ' (home Wi-Fi)'}`).join('<br>');
+    modal(`<h2>Pair your phone</h2>
+      <ol class="small" style="line-height:1.8;padding-left:18px;margin:6px 0 10px">
+        <li>Install the Switchboard app on your Android phone (<a href="#" data-ext="https://github.com/rickbesada-netizen/Switchboard/releases/latest/download/Switchboard.apk">download</a>).</li>
+        <li>Open it and tap <b>Scan QR code</b>, then point it at this code.</li></ol>
+      <img class="qrbox" src="${p.qr}" style="margin:0 auto">
+      <p class="small" style="margin-top:10px">Phone not on the same Wi-Fi as this PC? Use Tailscale (see Settings → Phone). Addresses:<br>${addrs || 'No network found'}</p>
+      <p class="small">This code works once and expires in 30 minutes.</p>
+      <div class="modal-foot"><button class="primary" data-close>Done</button></div>`);
+  } catch (e) { toast(e.message, true); }
+}
+function renderUpdatePill() {
+  const el = $('#updatePill');
+  const u = S.update || {};
+  if (REMOTE || !['downloading', 'ready'].includes(u.state)) return el.classList.add('hidden');
+  el.classList.remove('hidden');
+  el.classList.toggle('ready', u.state === 'ready');
+  el.textContent = u.state === 'ready' ? `⬆ Update ${u.version} ready · Restart` : `⬇ Downloading update${u.percent ? ' ' + u.percent + '%' : ''}...`;
+}
+$('#updatePill').addEventListener('click', async () => {
+  if ((S.update || {}).state === 'ready') { toast('Restarting to update...'); await call('installUpdate').catch((e) => toast(e.message, true)); }
+  else showView('settings');
+});
+window.sb.on('remote-info', (r) => { S.remote = r; S.st.settings.phoneAccess = r.enabled; if (S.view === 'settings') renderPanel(); });
+window.sb.on('update', (u) => { S.update = u; renderUpdatePill(); if (S.view === 'settings') renderPanel(); });
+window.__sbReconnected = () => { refreshState().then(() => { if (S.current) call('messages', S.current).then((m) => { S.msgs = m; renderMessages(true); }); }); };
 
 function logModal(title, text) {
   modal(`<h2>${esc(title)}</h2><div class="logbox" style="max-height:60vh">${esc(text || 'Empty')}</div><div class="modal-foot"><button class="primary" data-close>Close</button></div>`);
@@ -1145,5 +1254,8 @@ window.addEventListener('focus', () => { if (S.current && S.view === 'inbox') ca
 
 (async function start() {
   await refreshState();
+  try { S.appInfo = await call('appInfo'); S.update = S.appInfo.update; renderUpdatePill(); } catch {}
+  const hm = /room=([^&]+)/.exec(location.hash);
+  if (hm) { showView('inbox'); openRoom(decodeURIComponent(hm[1])); history.replaceState(null, '', location.pathname); return; }
   showView((S.st.accounts || []).length ? 'inbox' : 'accounts');
 })();
