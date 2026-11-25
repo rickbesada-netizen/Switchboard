@@ -1,0 +1,49 @@
+{
+  "name": "switchboard",
+  "productName": "Switchboard",
+  "version": "1.0.0",
+  "description": "One inbox for WhatsApp, Messenger and Instagram with ghost read, saved deleted messages, per-account proxies and quiet Instagram posting.",
+  "main": "main.js",
+  "author": "Rick",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "dependencies": {
+    "playwright-core": "^1.49.0",
+    "qrcode": "^1.5.4",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.switchboard.inbox",
+    "productName": "Switchboard",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**",
+      "renderer/**",
+      "assets/**",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "assets/icon.png"
+    },
+    "portable": {
+      "artifactName": "Switchboard.exe"
+    },
+    "asarUnpack": [
+      "node_modules/playwright-core/**"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rickbesada-netizen/Switchboard.git"
+  }
+}

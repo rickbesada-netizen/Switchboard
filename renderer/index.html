@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' sbmedia: data:; media-src 'self' sbmedia:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>Switchboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <nav id="rail">
+      <div class="brand"><img src="../assets/icon.png" alt="" /><span>Switchboard</span></div>
+      <div class="rail-group" id="railMain"></div>
+      <div class="rail-sep">Accounts</div>
+      <div class="rail-group" id="railAccounts"></div>
+      <div class="rail-sep">Tags</div>
+      <div class="rail-group" id="railTags"></div>
+      <div class="rail-bottom">
+        <div class="engine" id="engineStatus"><span class="dot"></span><span class="txt">Engine stopped</span></div>
+      </div>
+    </nav>
+
+    <section id="inboxView" class="view">
+      <aside id="chatList">
+        <div class="list-head">
+          <input id="search" type="search" placeholder="Search chats and messages" />
+          <div class="chips" id="filterChips">
+            <button data-f="all" class="chip on">All</button>
+            <button data-f="unread" class="chip">Unread</button>
+            <button data-f="pinned" class="chip">Pinned</button>
+            <button data-f="archived" class="chip">Archived</button>
+          </div>
+        </div>
+        <div id="rooms"></div>
+      </aside>
+      <main id="chat">
+        <div id="chatEmpty" class="empty">
+          <div class="empty-inner">
+            <img src="../assets/icon.png" alt="" />
+            <h2>All your chats, one inbox</h2>
+            <p>Pick a chat on the left. Ghost read is <b id="ghostDefaultTxt">on</b>, so people won't see that you've read their messages.</p>
+          </div>
+        </div>
+        <div id="chatBox" class="hidden">
+          <header id="chatHead"></header>
+          <div id="messages"></div>
+          <div id="typingLine"></div>
+          <div id="replyBar" class="hidden"></div>
+          <div id="composer">
+            <button class="icon-btn" id="attachBtn" title="Send a file">+</button>
+            <div class="compose-wrap">
+              <textarea id="input" rows="1" placeholder="Message"></textarea>
+              <div id="qrPop" class="hidden"></div>
+            </div>
+            <button class="icon-btn" id="scheduleBtn" title="Send later">⏱</button>
+            <button class="primary" id="sendBtn">Send</button>
+          </div>
+        </div>
+      </main>
+      <aside id="drawer" class="hidden"></aside>
+    </section>
+
+    <section id="panelView" class="view hidden"><div id="panel"></div></section>
+  </div>
+
+  <div id="modal" class="hidden"><div class="modal-card" id="modalCard"></div></div>
+  <div id="toast" class="hidden"></div>
+  <div id="lightbox" class="hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
