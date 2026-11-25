@@ -25,12 +25,15 @@ One inbox for WhatsApp, Messenger and Instagram on your PC, plus quiet posting t
 - Replies, reactions, editing and unsending your own messages, files, photos, video and voice notes, drag and drop.
 
 ## Download
-**https://github.com/rickbesada-netizen/Switchboard/releases/latest/download/Switchboard.exe**: click it and the latest Switchboard.exe downloads. No install needed. Windows may show "Windows protected your PC" because the exe isn't code-signed; click *More info → Run anyway*. No Docker, no server, nothing else to install.
+- **Windows**: https://github.com/rickbesada-netizen/Switchboard/releases/latest/download/Switchboard-Setup.exe. It installs with desktop and Start menu shortcuts, starts with Windows in the tray, and updates itself: new versions download in the background and a "Restart to update" button appears.
+- **Android**: https://github.com/rickbesada-netizen/Switchboard/releases/latest/download/Switchboard.apk. Pair it with the PC under *Settings → Phone → Pair a phone* by scanning the QR code. The phone then shows all your accounts, chats, folders and posting, and gets message notifications. Your accounts keep running on the PC. On the same Wi-Fi it works straight away; away from home, install Tailscale on the PC and the phone. The app tells you when a new version is out.
 
-Every push to `main` builds a new exe through GitHub Actions and publishes it as the latest release, so the link above always gets the newest version.
+Windows may show "Windows protected your PC" because the installer isn't code-signed: click *More info → Run anyway*. On Android, allow installing from your browser when asked.
+
+Every push to `main` builds the engine, the Windows installer and the Android app on GitHub Actions and publishes them as the latest release.
 
 ## Setup
-1. Download and open **Switchboard.exe** (link above). There's nothing else to install.
+1. Download and run **Switchboard-Setup.exe** (link above). There's nothing else to install.
 2. Go to **Accounts → Add an account**:
    - **WhatsApp**: scan the QR code with your phone (*Settings → Linked devices → Link a device*).
    - **Messenger / Instagram**: enter the account's proxy (optional), press *Add and log in*, and log in in the window that opens. It closes by itself once you're in. If Trickster is connected (*Settings*), you can pick a Trickster profile instead, or paste exported cookies.
