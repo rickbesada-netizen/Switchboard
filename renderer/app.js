@@ -98,9 +98,11 @@ function renderRail() {
   }).join('') || '<div class="small" style="padding:4px 10px">None yet</div>';
   $('#railTags').innerHTML = (S.st.tags || []).map((t) => `<button class="rail-item ${cur === 'tag:' + t.id ? 'on' : ''}" data-k="tag:${t.id}"><span class="ico"><span class="netdot" style="background:${esc(t.color)}"></span></span><span class="lbl">${esc(t.name)}</span></button>`).join('');
   const st = S.stack.status;
-  const txt = { running: 'Engine running', starting: 'Engine starting...', stopped: 'Engine stopped', error: 'Engine error', 'docker-missing': 'Docker not installed', 'docker-stopped': 'Docker not running' }[st] || st;
+  const accs = S.st.accounts || [];
+  const bad = accs.filter((a) => a.status && a.status.logins && a.status.logins.some((l) => /BAD_CREDENTIALS|UNKNOWN_ERROR/.test(l.state))).length;
+  const txt = st !== 'running' ? 'Starting...' : bad ? `${bad} account${bad > 1 ? 's' : ''} need attention` : accs.length ? 'All accounts running' : 'Ready';
   const e = $('#engineStatus');
-  e.className = 'engine ' + st;
+  e.className = 'engine ' + (st === 'running' && bad ? 'error' : st);
   e.querySelector('.txt').textContent = txt;
 }
 function railKey() {
@@ -277,6 +279,7 @@ function msgHtml(m, prev, r) {
   }
   const flags = [];
   if (m.deleted) flags.push(`<span class="flag del">${m.mine ? 'You unsent this' : 'Deleted by sender'}</span>`);
+  if (m.failed) flags.push(`<span class="flag del" title="${esc(m.failed)}">Not delivered</span>`);
   if (m.edited) flags.push(`<span class="flag edit" data-hist="${esc(m.id)}">edited</span>`);
   const seen = m.mine && r && r.seenTs && r.seenTs >= m.ts ? '<span class="seen">✓✓ Seen</span>' : '';
   const reacts = Object.entries(m.reactions || {}).map(([k, arr]) => `<span class="react ${arr.some((x) => x.sender === S.st.me) ? 'me' : ''}" title="${esc(arr.map((x) => x.sender.split(':')[0].slice(1)).join(', '))}">${esc(k)} ${arr.length > 1 ? arr.length : ''}</span>`).join('');
@@ -535,19 +538,11 @@ function renderPanel() {
 }
 
 function panelEngine() {
-  const st = S.stack.status;
-  const docker = st === 'docker-missing'
-    ? `<div class="notice">Docker Desktop isn't installed. It runs the bridges in the background.</div><button class="primary" data-ext="https://www.docker.com/products/docker-desktop/">Download Docker Desktop</button>`
-    : st === 'docker-stopped' ? `<div class="notice">Docker Desktop is installed but not running. Open it, wait until it says "Engine running", then press Start.</div>` : '';
-  return `<h1>Engine</h1><div class="sub">Your private message server and the WhatsApp, Messenger and Instagram bridges, all running on this PC inside Docker.</div>
-    ${!S.st.setupDone ? `<div class="card"><h3>First-time setup</h3><ol class="small" style="line-height:1.9;margin:0 0 12px;padding-left:18px">
-      <li>Install <b>Docker Desktop</b> and open it (leave it running; tick "Start when you sign in" in its settings).</li>
-      <li>Press <b>Start engine</b> below. The first start downloads about 400 MB and takes a few minutes.</li>
-      <li>Go to <b>Accounts</b> and connect WhatsApp, Messenger or Instagram.</li></ol></div>` : ''}
-    <div class="card">${docker}
-      <div class="row"><span class="grow">Status: <b>${esc(st)}</b>${S.stack.detail ? ` <span class="small">${esc(S.stack.detail)}</span>` : ''}</span>
-      <button class="primary" id="bootBtn" ${st === 'starting' ? 'disabled' : ''}>${st === 'running' ? 'Restart engine' : 'Start engine'}</button>
-      <button class="ghost-btn" id="srvLog">Server log</button></div>
+  const accs = S.st.accounts || [];
+  return `<h1>Engine</h1><div class="sub">Switchboard runs a small built-in engine for each account. Nothing else needs to be installed.</div>
+    <div class="card"><h3>Accounts</h3>
+      ${accs.length ? accs.map((a) => `<div class="acc">${avatarHtml(a.label, null, a.network, 32)}<div class="info"><b>${esc(a.label)}</b><div>${a.status && a.status.online ? accState(a) : '<span class="state wait">starting</span>'}</div></div><div class="btns"><button class="ghost-btn" data-logs="${a.id}">Log</button></div></div>`).join('') : '<div class="small">No accounts yet. <a href="#" data-view="accounts">Add one</a>.</div>'}
+      <div class="btns" style="margin-top:12px"><button class="ghost-btn" id="bootBtn">Restart engines</button><button class="ghost-btn" id="srvLog">App log</button></div>
     </div>
     <div class="card"><h3>Activity</h3><div class="logbox" id="logbox">${esc(S.logs.slice(-400).join('\n')) || 'Nothing yet.'}</div></div>`;
 }
@@ -564,9 +559,7 @@ function accState(a) {
 }
 function panelAccounts() {
   const accs = S.st.accounts || [];
-  const engineOff = S.stack.status !== 'running';
   return `<h1>Accounts</h1><div class="sub">Each account runs in its own bridge, with its own proxy, so client accounts never share an IP.</div>
-    ${engineOff ? `<div class="notice">The engine isn't running. <a href="#" data-view="engine">Start it here</a> first.</div>` : ''}
     <div class="card"><h3>Connected</h3>
       ${accs.length ? accs.map((a) => `<div class="acc">${avatarHtml(a.label, null, a.network, 38)}
         <div class="info"><b>${esc(a.label)}</b><span class="small">${esc(netLabel(a.network))}${a.proxy ? ' · proxy ' + esc(a.proxy.replace(/\/\/[^@]*@/, '//***@')) : ' · no proxy'}${S.st.settings.tricksterEnabled && a.tricksterProfileId ? ' · Trickster #' + esc(a.tricksterProfileId) : ''}</span><div>${accState(a)}</div></div>
@@ -585,7 +578,7 @@ function panelAccounts() {
           <div class="row" style="margin:0"><select id="aTrick" class="grow"><option value="">None - use Switchboard's own login window</option></select><button class="ghost-btn" id="loadTrick">Load</button></div></label>` : ''}
       </div>
       <div class="small" style="margin-bottom:12px">WhatsApp: you scan a QR code with your phone. Messenger / Instagram: a login window opens that runs through this account's proxy; log in normally and it closes by itself.${S.st.settings.tricksterEnabled ? ' If you pick a Trickster profile, the login is taken from that profile instead.' : ''} Use an http proxy for logins that need a username and password (Chrome can't log in to SOCKS5 proxies with a password).</div>
-      <button class="primary" id="addAcc" ${engineOff ? 'disabled' : ''}>Add and log in</button>
+      <button class="primary" id="addAcc">Add and log in</button>
     </div>`;
 }
 
@@ -702,8 +695,8 @@ function panelSettings() {
       <label class="field"><span>Trickster local API address</span><input data-set="tricksterApi" value="${esc(s.tricksterApi)}"></label>
       ${sw('closeTricksterAfter', 'Close the Trickster profile afterwards if Switchboard opened it')}
     </div>
-    <div class="card"><h3>Advanced: bridge images</h3><div class="small" style="margin-bottom:8px">Only change these if a bridge moves to a new image tag.</div>
-      ${Object.entries(s.images).map(([k, v]) => `<label class="field"><span>${esc(k)}</span><input data-img="${k}" value="${esc(v)}"></label>`).join('')}
+    <div class="card"><h3>History</h3>
+      <label class="field"><span>Messages to load per chat when an account is first connected</span><input data-set="backfillMessages" type="number" min="0" max="2000" value="${esc(s.backfillMessages || 200)}"></label>
     </div>
     <div class="btns"><button class="primary" id="saveSettings">Save settings</button><button class="ghost-btn" id="openData">Open data folder</button><button class="ghost-btn" data-view="engine">Engine and logs</button></div>`;
 }
@@ -717,8 +710,8 @@ $('#panel').addEventListener('click', async (e) => {
   if (ext) return call('openExternal', ext.dataset.ext);
   try {
     // engine
-    if (t.id === 'bootBtn') { t.disabled = true; await call('boot'); toast('Engine running'); }
-    if (t.id === 'srvLog') logModal('Server log', await call('stackLogs', 'synapse'));
+    if (t.id === 'bootBtn') { t.disabled = true; await call('restartEngines'); toast('Engines restarted'); t.disabled = false; }
+    if (t.id === 'srvLog') logModal('App log', await call('stackLogs'));
     // accounts
     if (t.id === 'loadTrick') {
       const list = await call('tricksterProfiles');
@@ -769,9 +762,8 @@ $('#panel').addEventListener('click', async (e) => {
     if (t.id === 'saveTag') { S.st.tags = await call('saveList', 'tags', readTags()); toast('Saved'); renderRail(); renderRooms(); }
     // settings
     if (t.id === 'saveSettings') {
-      const patch = { images: { ...S.st.settings.images } };
-      document.querySelectorAll('[data-set]').forEach((el) => { patch[el.dataset.set] = el.type === 'checkbox' ? el.checked : el.value.trim(); });
-      document.querySelectorAll('[data-img]').forEach((el) => { patch.images[el.dataset.img] = el.value.trim(); });
+      const patch = {};
+      document.querySelectorAll('[data-set]').forEach((el) => { patch[el.dataset.set] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value.trim(); });
       S.st.settings = await call('saveSettings', patch);
       toast('Settings saved');
       renderPanel();
@@ -900,7 +892,6 @@ window.sb.on('stack-status', (s) => {
   S.st.stackStatus = s.status;
   renderRail();
   if (['engine', 'accounts'].includes(S.view)) renderPanel();
-  if (s.status === 'running' && S.st && !S.st.setupDone) { S.st.setupDone = true; refreshState(); showView('accounts'); }
 });
 window.sb.on('log', (line) => {
   S.logs.push(line);
@@ -924,6 +915,5 @@ window.addEventListener('focus', () => { if (S.current && S.view === 'inbox') ca
 
 (async function start() {
   await refreshState();
-  if (!S.st.setupDone || ['docker-missing', 'docker-stopped', 'error'].includes(S.stack.status)) showView('engine');
-  else showView('inbox');
+  showView((S.st.accounts || []).length ? 'inbox' : 'accounts');
 })();

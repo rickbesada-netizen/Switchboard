@@ -3,7 +3,7 @@ const U = require('./util');
 const NETWORKS = {
   whatsapp: { label: 'WhatsApp', short: 'wa', color: '#25D366', imageKey: 'whatsapp', login: 'qr' },
   messenger: { label: 'Messenger', short: 'fb', color: '#0084FF', imageKey: 'messenger', login: 'cookies', flow: 'facebook', cookieSite: 'https://www.facebook.com', loginUrl: 'https://www.facebook.com/login', loginCookie: 'c_user' },
-  instagram: { label: 'Instagram', short: 'ig', color: '#E1306C', imageKey: 'instagram', login: 'cookies', cookieSite: 'https://www.instagram.com', loginUrl: 'https://www.instagram.com/accounts/login/', loginCookie: 'sessionid' },
+  instagram: { label: 'Instagram', short: 'ig', color: '#E1306C', imageKey: 'instagram', login: 'cookies', flow: 'instagram', cookieSite: 'https://www.instagram.com', loginUrl: 'https://www.instagram.com/accounts/login/', loginCookie: 'sessionid' },
 };
 
 const DEFAULTS = {
@@ -18,13 +18,7 @@ const DEFAULTS = {
     tricksterApi: 'http://127.0.0.1:53200',
     closeTricksterAfter: true,
     serverName: 'switchboard.local',
-    images: {
-      synapse: 'matrixdotorg/synapse:latest',
-      whatsapp: 'dock.mau.dev/mautrix/whatsapp:latest',
-      messenger: 'dock.mau.dev/mautrix/meta:latest',
-      instagram: 'dock.mau.dev/mautrix/meta:ig-latest',
-      helper: 'alpine:3',
-    },
+    backfillMessages: 200,
   },
   matrix: { user: 'me', password: null, token: null, deviceId: null, since: null },
   accounts: [],
@@ -81,15 +75,6 @@ class Config {
     const s = NETWORKS[network].short;
     this.counters[s] = (this.counters[s] || 0) + 1;
     return s + this.counters[s];
-  }
-  usedPorts() {
-    return new Set(this.accounts.map((a) => a.port));
-  }
-  nextPort() {
-    const used = this.usedPorts();
-    let p = 29401;
-    while (used.has(p)) p++;
-    return p;
   }
 }
 

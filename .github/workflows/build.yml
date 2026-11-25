@@ -59,7 +59,7 @@ jobs:
           mkdir -p /tmp/sbtest
           for net in whatsapp messenger instagram; do
             echo "== $net"
-            ( printf '{"id":1,"cmd":"login_flows"}\n{"id":2,"cmd":"whoami"}\n'; sleep 6; printf '{"id":3,"cmd":"quit"}\n' ) | timeout 40 /tmp/engine-linux -network $net -account t$net -data /tmp/sbtest/$net 2>/tmp/sbtest/$net.log | head -c 3000
+            ( printf '{"id":1,"cmd":"login_flows"}\n{"id":2,"cmd":"whoami"}\n'; if [ $net = whatsapp ]; then printf '{"id":4,"cmd":"login_start","args":{"flow_id":"qr"}}\n'; fi; sleep 10; printf '{"id":3,"cmd":"quit"}\n' ) | timeout 40 /tmp/engine-linux -network $net -account t$net -data /tmp/sbtest/$net 2>/tmp/sbtest/$net.log | head -c 3000
             echo
             tail -5 /tmp/sbtest/$net.log
           done
@@ -70,6 +70,10 @@ jobs:
             engine/bin/engine.exe
             engine/go.mod
             engine/go.sum
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-linux
+          path: /tmp/engine-linux
 
   app:
     needs: engine
@@ -80,6 +84,9 @@ jobs:
         with:
           name: engine
           path: engine
+      - name: Check engine is in place
+        shell: bash
+        run: ls -la engine/bin
       - uses: actions/setup-node@v4
         with:
           node-version: 20

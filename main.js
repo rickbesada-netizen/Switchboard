@@ -1,13 +1,13 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol, Notification, shell, Tray, Menu, nativeImage, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol, Notification, shell, Tray, Menu, nativeImage, session, net } = require('electron');
+const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 const QRCode = require('qrcode');
 const U = require('./src/util');
 const { Config, NETWORKS } = require('./src/config');
-const { Stack } = require('./src/stack');
 const { Store } = require('./src/store');
-const { Matrix } = require('./src/matrix');
-const { BridgeAPI, parseCookieText, fillCookieFields } = require('./src/bridges');
+const { Engine } = require('./src/engine');
+const { parseCookieText, fillCookieFields } = require('./src/bridges');
 const trickster = require('./src/trickster');
 const igposter = require('./src/igposter');
 
@@ -20,7 +20,9 @@ if (!app.requestSingleInstanceLock()) app.quit();
 let win = null;
 let tray = null;
 let quitting = false;
-let cfg, store, stack, matrix;
+let cfg, store, engine, matrix; // matrix = engine (same interface as the old Matrix client)
+let engineStatus = 'stopped';
+const bridgeStates = {};
 let focusedRoom = null;
 const bootTime = Date.now();
 const accStatus = {}; // accId -> {state, logins:[]}
@@ -89,7 +91,7 @@ function roomHidden(r) {
 function txt(x) {
   if (!x) return '';
   if (typeof x === 'string') return x;
-  return x.en || x.message || Object.values(x).find((v) => typeof v === 'string') || '';
+  return x.text || x.en || x.message || Object.values(x).find((v) => typeof v === 'string' && v !== x.key) || '';
 }
 function preview(m) {
   if (m.deleted && m.lost) return 'Deleted message';
@@ -141,7 +143,7 @@ function state() {
   return {
     settings: cfg.settings,
     setupDone: cfg.setupDone,
-    stackStatus: stack.status,
+    stackStatus: engineStatus,
     networks: NETWORKS,
     accounts: cfg.accounts.map(publicAccount),
     rooms: Object.values(store.rooms).map(summary).filter((s) => !s.hidden),
@@ -158,17 +160,27 @@ function pushRoom(roomId) {
 }
 
 // ---------------------------------------------------------------- engine boot
+// Each account runs in its own built-in engine process (no Docker, no server).
+class BridgeAPI {
+  constructor(acc) { this.acc = acc; }
+  waitReady() { return engine.proc(this.acc.id).waitReady(90000); }
+  flows() { return engine.call(this.acc.id, 'login_flows', {}, 30000); }
+  start(flowId) { return engine.call(this.acc.id, 'login_start', { flow_id: flowId }, 120000); }
+  step(loginId, stepId, type, body, timeout) { return engine.call(this.acc.id, 'login_step', { login_id: loginId, step_type: type, data: body || {} }, timeout || 120000); }
+  whoami() { return engine.call(this.acc.id, 'whoami', {}, 20000); }
+  logout(loginId) { return engine.call(this.acc.id, 'logout', { login_id: loginId }, 60000); }
+}
+
 async function boot() {
   if (booting) return booting;
   booting = (async () => {
     try {
-      const ok = await stack.start();
-      if (!ok) return false;
+      engineStatus = 'running';
+      send('stack-status', { status: engineStatus });
       cfg.setupDone = true;
       cfg.save();
-      await matrix.login();
-      matrix.start();
-      for (const a of cfg.accounts) refreshAccount(a).catch(() => {});
+      engine.startAll();
+      setTimeout(() => { for (const a of cfg.accounts) refreshAccount(a).catch(() => {}); }, 4000);
       return true;
     } finally {
       booting = null;
@@ -177,15 +189,34 @@ async function boot() {
   return booting;
 }
 
+function tailFile(file, maxBytes = 120000) {
+  try {
+    const st = fs.statSync(file);
+    const fd = fs.openSync(file, 'r');
+    const len = Math.min(st.size, maxBytes);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, st.size - len);
+    fs.closeSync(fd);
+    return buf.toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
 async function refreshAccount(acc) {
   try {
     const w = await new BridgeAPI(acc, cfg).whoami();
-    const logins = (w.logins || []).map((l) => ({
-      id: l.id,
-      name: l.name || (l.profile && (l.profile.name || l.profile.username || l.profile.phone)) || l.id,
-      state: l.state_event || (l.state && l.state.state_event) || 'UNKNOWN',
-      error: l.state_reason || (l.state && (l.state.message || l.state.error)) || null,
-    }));
+    const prev = (accStatus[acc.id] && accStatus[acc.id].logins) || [];
+    const logins = (w.logins || []).map((l) => {
+      const st = (bridgeStates[acc.id] || {})[l.id] || {};
+      const old = prev.find((x) => x.id === l.id) || {};
+      return {
+        id: l.id,
+        name: l.name || (l.profile && (l.profile.name || l.profile.username || l.profile.phone)) || l.id,
+        state: st.state_event || old.state || 'CONNECTING',
+        error: st.message || st.error || null,
+      };
+    });
     accStatus[acc.id] = { online: true, logins };
     const sn = cfg.settings.serverName;
     acc.selfGhosts = logins.map((l) => `@sb${acc.id}_${U.escapeLocalpart(l.id)}:${sn}`);
@@ -507,7 +538,7 @@ function createTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open Switchboard', click: showWindow },
     { type: 'separator' },
-    { label: 'Quit (engine keeps running in Docker)', click: () => { quitting = true; app.quit(); } },
+    { label: 'Quit (stops receiving messages until reopened)', click: () => { quitting = true; app.quit(); } },
   ]));
   tray.on('click', showWindow);
 }
@@ -522,7 +553,8 @@ function handle(ch, fn) {
 function setupIpc() {
   handle('state', () => state());
   handle('boot', () => boot());
-  handle('stackLogs', (svc) => stack.logs(svc || 'synapse'));
+  handle('restartEngines', async () => { for (const a of cfg.accounts) await engine.restartAccount(a); return true; });
+  handle('stackLogs', () => tailFile(U.p('logs', 'switchboard.log')));
   handle('openExternal', (url) => shell.openExternal(url));
 
   handle('messages', (roomId) => {
@@ -595,11 +627,11 @@ function setupIpc() {
     return summary(r);
   });
   handle('saveMedia', async (mxc, name) => {
-    const [server, id] = mxc.replace('mxc://', '').split('/');
-    const res = await dialog.showSaveDialog(win, { defaultPath: name || id });
+    const f = engine.mediaFile(mxc);
+    if (!f) throw new Error('This file is not saved on this PC');
+    const res = await dialog.showSaveDialog(win, { defaultPath: name || f.name });
     if (res.canceled) return false;
-    const r = await matrix.media(server, id, false);
-    fs.writeFileSync(res.filePath, Buffer.from(await r.arrayBuffer()));
+    fs.copyFileSync(f.file, res.filePath);
     return true;
   });
   handle('exportChat', async (roomId, format) => {
@@ -629,17 +661,13 @@ function setupIpc() {
     const acc = {
       id, network, label: label || `${NETWORKS[network].label} ${id.replace(/\D/g, '')}`,
       proxy: (proxy || '').trim(), tricksterProfileId: tricksterProfileId || null,
-      port: cfg.nextPort(), asId: `sb${id}`, secret: U.rand(40), needsBootstrap: true, createdAt: Date.now(),
+      createdAt: Date.now(),
     };
     cfg.accounts.push(acc);
     cfg.save(true);
+    if (engineStatus !== 'running') await boot();
+    engine.startAccount(acc);
     send('accounts', cfg.accounts.map(publicAccount));
-    try {
-      await stack.applyAccounts(acc);
-    } catch (e) {
-      log('Account setup error: ' + e.message);
-      throw e;
-    }
     return publicAccount(acc);
   });
   handle('updateAccount', async (id, patch) => {
@@ -648,9 +676,9 @@ function setupIpc() {
     const proxyChanged = 'proxy' in patch && (patch.proxy || '').trim() !== acc.proxy;
     if ('label' in patch) acc.label = patch.label;
     if ('tricksterProfileId' in patch) acc.tricksterProfileId = patch.tricksterProfileId || null;
-    if (proxyChanged) { acc.proxy = (patch.proxy || '').trim(); acc.needsBootstrap = true; }
+    if (proxyChanged) acc.proxy = (patch.proxy || '').trim();
     cfg.save(true);
-    if (proxyChanged) await stack.applyAccounts(acc);
+    if (proxyChanged) { log(`${acc.label}: proxy changed, restarting`); await engine.restartAccount(acc); }
     send('accounts', cfg.accounts.map(publicAccount));
     return publicAccount(acc);
   });
@@ -678,13 +706,13 @@ function setupIpc() {
     cfg.accounts = cfg.accounts.filter((a) => a.id !== id);
     cfg.save(true);
     try { await accSession(acc).clearStorageData(); } catch {}
-    await stack.removeAccountData(acc);
-    await stack.applyAccounts(null);
+    await engine.stopAccount(acc.id);
+    try { fs.rmSync(U.p('engine', acc.id), { recursive: true, force: true }); } catch {}
     send('accounts', cfg.accounts.map(publicAccount));
     return true;
   });
   handle('refreshAccounts', async () => { for (const a of cfg.accounts) await refreshAccount(a); return cfg.accounts.map(publicAccount); });
-  handle('accountLogs', (id) => stack.logs(`bridge-${id}`));
+  handle('accountLogs', (id) => tailFile(U.p('logs', `engine-${id}.log`)) || 'No log yet.');
   handle('openAccountBrowser', (id) => {
     const acc = cfg.account(id);
     if (!acc || !NETWORKS[acc.network].cookieSite) throw new Error('This account has no browser');
@@ -701,9 +729,7 @@ function setupIpc() {
 
   // settings & tools
   handle('saveSettings', async (patch) => {
-    const imagesChanged = patch.images && JSON.stringify(patch.images) !== JSON.stringify(cfg.settings.images);
     Object.assign(cfg.settings, patch);
-    if (imagesChanged) for (const a of cfg.accounts) a.needsBootstrap = true;
     cfg.save(true);
     for (const r of Object.values(store.rooms)) pushRoom(r.id);
     return cfg.settings;
@@ -748,7 +774,7 @@ function setupIpc() {
 
 // ---------------------------------------------------------------- app start
 app.on('second-instance', () => showWindow());
-app.on('before-quit', () => { quitting = true; store && store.flush(); cfg && cfg.save(true); });
+app.on('before-quit', () => { quitting = true; store && store.flush(); cfg && cfg.save(true); if (engine) for (const p of Object.values(engine.procs)) { p.stopping = true; try { p.child && p.child.stdin.write(JSON.stringify({ id: 0, cmd: 'quit' }) + '\n'); } catch {} } });
 app.on('window-all-closed', () => { if (!cfg || !cfg.settings.minimizeToTray) app.quit(); });
 
 app.whenReady().then(async () => {
@@ -757,11 +783,41 @@ app.whenReady().then(async () => {
   fs.mkdirSync(U.p('logs'), { recursive: true });
   cfg = new Config();
   store = new Store();
-  stack = new Stack(cfg);
-  matrix = new Matrix(cfg, store);
-
-  stack.on('log', log);
-  stack.on('status', (s) => send('stack-status', s));
+  engine = new Engine(cfg, store);
+  matrix = engine;
+  engine.on('account-status', (id, s) => {
+    const acc = cfg.account(id);
+    if (!acc) return;
+    accStatus[id] = { ...(accStatus[id] || { logins: [] }), online: !!s.running };
+    if (s.running) setTimeout(() => refreshAccount(acc).catch(() => {}), 1500);
+    else { log(`${acc.label}: engine stopped (code ${s.code}), restarting`); send('accounts', cfg.accounts.map(publicAccount)); }
+  });
+  engine.on('account-error', (id, msg) => log(`${(cfg.account(id) || {}).label || id}: ${msg}`));
+  engine.on('bridge-state', (id, st) => {
+    const acc = cfg.account(id);
+    if (!acc) return;
+    const map = (bridgeStates[id] = bridgeStates[id] || {});
+    const s = (accStatus[id] = accStatus[id] || { online: true, logins: [] });
+    if (st.remote_id) {
+      map[st.remote_id] = st;
+      let l = s.logins.find((x) => x.id === st.remote_id);
+      if (st.state_event === 'LOGGED_OUT') s.logins = s.logins.filter((x) => x.id !== st.remote_id);
+      else {
+        if (!l) { l = { id: st.remote_id }; s.logins.push(l); }
+        l.name = st.remote_name || l.name || st.remote_id;
+        l.state = st.state_event;
+        l.error = st.message || st.error || null;
+      }
+      if (/BAD_CREDENTIALS|LOGGED_OUT/.test(st.state_event)) log(`${acc.label}: ${st.state_event.toLowerCase().replace(/_/g, ' ')}${st.message ? ' - ' + st.message : ''}`);
+    }
+    send('accounts', cfg.accounts.map(publicAccount));
+  });
+  engine.on('msg-status', (roomId, eventId, err) => {
+    send('msg-failed', roomId, eventId, err);
+    const r = store.rooms[roomId];
+    const m = r && store.find(roomId, eventId);
+    if (m) send('msg', roomId, msgOut(r, m), 'update');
+  });
   matrix.on('event', onEvent);
   matrix.on('room', pushRoom);
   matrix.on('typing', pushRoom);
@@ -770,10 +826,12 @@ app.whenReady().then(async () => {
   matrix.on('online', (on, err) => send('sync-status', { online: on, error: err }));
 
   protocol.handle('sbmedia', async (req) => {
-    const u = new URL(req.url); // sbmedia://media/<server>/<id>?thumb=1
+    const u = new URL(req.url); // sbmedia://media/<server>/<id>
     const parts = u.pathname.split('/').filter(Boolean);
-    const r = await matrix.media(parts[0], parts[1], u.searchParams.get('thumb') === '1');
-    return new Response(r.body, { status: r.status, headers: { 'Content-Type': r.headers.get('content-type') || 'application/octet-stream', 'Cache-Control': 'max-age=86400' } });
+    const f = engine.mediaFile(`mxc://${parts[0]}/${parts[1]}`);
+    if (!f) return new Response('Not found', { status: 404 });
+    const r = await net.fetch(pathToFileURL(f.file).toString());
+    return new Response(r.body, { status: 200, headers: { 'Content-Type': f.mime, 'Cache-Control': 'max-age=31536000' } });
   });
 
   setupIpc();
@@ -782,5 +840,5 @@ app.whenReady().then(async () => {
   startScheduler();
   setInterval(() => { for (const a of cfg.accounts) refreshAccount(a).catch(() => {}); }, 120000);
 
-  if (cfg.setupDone) boot().catch((e) => log('Start failed: ' + e.message));
+  boot().catch((e) => log('Start failed: ' + e.message));
 });

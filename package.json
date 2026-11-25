@@ -40,6 +40,15 @@
     },
     "asarUnpack": [
       "node_modules/playwright-core/**"
+    ],
+    "extraResources": [
+      {
+        "from": "engine/bin",
+        "to": "engine",
+        "filter": [
+          "engine.exe"
+        ]
+      }
     ]
   },
   "repository": {
