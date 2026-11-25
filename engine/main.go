@@ -19,7 +19,7 @@ import (
 	"github.com/rs/zerolog"
 	"go.mau.fi/util/dbutil"
 	"gopkg.in/yaml.v3"
-	_ "modernc.org/sqlite"
+	_ "go.mau.fi/util/dbutil/litestream"
 
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/bridgeconfig"
@@ -106,14 +106,12 @@ func main() {
 	}
 
 	dbPath := filepath.ToSlash(filepath.Join(*flagData, "bridge.db"))
-	uri := "file:" + dbPath + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(15000)&_txlock=immediate"
-	db, err := dbutil.NewWithDialect(uri, "sqlite")
+	db, err := dbutil.NewWithDialect("file:"+dbPath+"?_txlock=immediate", "sqlite3-fk-wal")
 	if err != nil {
 		fatal("failed to open database: " + err.Error())
 	}
 	db.Owner = "megabridge/switchboard-" + *flagNetwork
 	db.Log = dbutil.ZeroLogger(log.With().Str("component", "db").Logger())
-	db.RawDB.SetMaxOpenConns(1) // sqlite: one writer avoids "database is locked"
 
 	cfg := &bridgeconfig.BridgeConfig{
 		CommandPrefix:                 "!sb",

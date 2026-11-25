@@ -16,34 +16,44 @@ jobs:
         with:
           go-version: stable
           cache: false
+      - name: Install Windows C compiler
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64 libc6-dev >/dev/null
       - name: Resolve dependencies
         working-directory: engine
         env:
           GOTOOLCHAIN: auto
         run: |
-          go get go.mau.fi/mautrix-whatsapp@main go.mau.fi/mautrix-meta@main modernc.org/sqlite@latest
+          go get go.mau.fi/mautrix-whatsapp@main go.mau.fi/mautrix-meta@main
+          # carry over the bridges' own replace directives (e.g. Beeper's patched req library)
+          for m in go.mau.fi/mautrix-meta go.mau.fi/mautrix-whatsapp; do
+            f=$(go list -m -f '{{.GoMod}}' $m)
+            grep -E '^replace ' "$f" >> go.mod || true
+          done
           go mod tidy
+          cat go.mod
       - name: Vet
         working-directory: engine
         env:
           GOTOOLCHAIN: auto
           GOOS: windows
           GOARCH: amd64
-          CGO_ENABLED: "0"
-        run: go vet ./...
+          CGO_ENABLED: "1"
+          CC: x86_64-w64-mingw32-gcc
+        run: go vet .
       - name: Build engine.exe (Windows)
         working-directory: engine
         env:
           GOTOOLCHAIN: auto
           GOOS: windows
           GOARCH: amd64
-          CGO_ENABLED: "0"
+          CGO_ENABLED: "1"
+          CC: x86_64-w64-mingw32-gcc
         run: go build -trimpath -ldflags "-s -w" -o bin/engine.exe .
       - name: Build engine (Linux, smoke test)
         working-directory: engine
         env:
           GOTOOLCHAIN: auto
-          CGO_ENABLED: "0"
+          CGO_ENABLED: "1"
         run: |
           go build -o /tmp/engine-linux .
           mkdir -p /tmp/sbtest
