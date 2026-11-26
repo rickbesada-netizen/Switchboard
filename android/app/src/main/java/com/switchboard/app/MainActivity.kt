@@ -106,7 +106,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
         web.setDownloadListener { dl, _, _, _, _ -> startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(dl))) }
-        setContentView(web)
+        // Android 15 draws apps behind the status bar and nav bar, so keep the page clear of them
+        // (and of the keyboard, so the message box stays visible while typing)
+        val root = android.widget.FrameLayout(this)
+        root.setBackgroundColor(Color.parseColor("#12151c"))
+        root.addView(web, android.widget.FrameLayout.LayoutParams(-1, -1))
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val t = androidx.core.view.WindowInsetsCompat.Type
+            val bars = insets.getInsets(t.systemBars() or t.displayCutout())
+            val ime = insets.getInsets(t.ime())
+            v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+            androidx.core.view.WindowInsetsCompat.CONSUMED
+        }
+        androidx.core.view.WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = false
+        setContentView(root)
         web.loadUrl(UI)
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
