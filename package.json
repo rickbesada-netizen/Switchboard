@@ -12,11 +12,12 @@
     "dist": "electron-builder --win nsis"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.119.2",
+    "electron-updater": "^6.8.11",
     "playwright-core": "^1.49.0",
     "qrcode": "^1.5.4",
-    "yaml": "^2.6.1",
-    "electron-updater": "^6.8.11",
-    "ws": "^8.23.0"
+    "ws": "^8.23.0",
+    "yaml": "^2.6.1"
   },
   "devDependencies": {
     "electron": "^33.2.1",

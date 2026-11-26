@@ -15,6 +15,7 @@ const BLOCKED = new Set([
   'openAccountBrowser', 'loginAccount', 'loginAnswer', 'addAccount', 'removeAccount', 'updateAccount',
   'logoutAccount', 'restartEngines', 'setHiddenPin', 'saveSettings', 'installUpdate', 'checkUpdates',
   'remoteInfo', 'remoteEnable', 'remoteNewPairing', 'remoteRevoke', 'tricksterProfiles', 'boot',
+  'cloudSignIn', 'cloudCreateAccount', 'cloudSignOut', 'cloudSetPriorities', 'cloudRemoveDevice', 'cloudMakeHost', 'viewerSession',
 ]);
 // Events the phone doesn't need
 const QUIET_EVENTS = new Set(['log', 'login-step', 'login-ask', 'update']);
@@ -23,6 +24,7 @@ const STATIC = {
   '/styles.css': ['renderer/styles.css', 'text/css'],
   '/app.js': ['renderer/app.js', 'application/javascript'],
   '/remote-shim.js': ['renderer/remote-shim.js', 'application/javascript'],
+  '/vendor/supabase.js': ['renderer/vendor/supabase.js', 'application/javascript'],
   '/assets/icon.png': ['assets/icon.png', 'image/png'],
   '/icon.png': ['assets/icon.png', 'image/png'],
 };
@@ -41,7 +43,8 @@ function lanAddresses(port) {
 }
 
 class Remote {
-  constructor({ cfg, handlers, mediaFile, log, root, onChange }) {
+  constructor({ cfg, handlers, mediaFile, log, root, onChange, cloud }) {
+    this.cloud = cloud;
     this.onChange = onChange || (() => {});
     this.cfg = cfg;
     this.handlers = handlers;
@@ -61,6 +64,15 @@ class Remote {
     return !!this.server;
   }
 
+  // Signed-in Switchboard devices send their account token; QR-paired phones send a device token
+  async authorize(token, name) {
+    if (!token) return null;
+    if (token.startsWith('eyJ') && this.cloud) {
+      if (!(await this.cloud.verifyToken(token))) return null;
+      return { id: 'account:' + (name || 'device'), name: name || 'Signed-in device', account: true };
+    }
+    return this.device(token);
+  }
   device(token) {
     if (!token) return null;
     const d = this.cfg.remote.devices.find((x) => x.token === token);
@@ -69,6 +81,7 @@ class Remote {
     return d;
   }
   touch(d, name) {
+    if (d.account) return;
     const first = d.pending;
     d.pending = false;
     d.lastSeen = Date.now();
@@ -142,40 +155,53 @@ class Remote {
     this.wss = null;
   }
 
-  onSocket(ws, u) {
-    const d = this.device(u.searchParams.get('t'));
+  async onSocket(ws, u) {
+    const early = []; // messages that arrive while the sign-in token is being checked
+    const onEarly = (raw) => early.push(raw);
+    ws.on('message', onEarly);
+    const d = await this.authorize(u.searchParams.get('t'), u.searchParams.get('device'));
+    ws.off('message', onEarly);
     if (!d) { ws.close(4001, 'not paired'); return; }
     this.touch(d, u.searchParams.get('device'));
     ws.device = d;
     ws.notifyOnly = u.searchParams.get('notify') === '1';
     this.clients.add(ws);
     ws.on('close', () => { this.clients.delete(ws); this.onChange(); });
-    ws.on('message', async (raw) => {
+    const onMsg = async (raw) => {
       let m;
       try { m = JSON.parse(String(raw)); } catch { return; }
       if (!m || !m.id || !m.ch) return;
       const reply = (o) => { if (ws.readyState === 1) ws.send(JSON.stringify({ id: m.id, ...o })); };
-      if (BLOCKED.has(m.ch)) return reply({ ok: false, error: 'Do this on your PC.' });
-      const fn = this.handlers.get(m.ch);
-      if (!fn) return reply({ ok: false, error: 'Unknown action' });
-      try { reply({ ok: true, data: await fn(...(m.args || [])) }); } catch (e) { reply({ ok: false, error: e.message, screenshot: e.screenshot }); }
-    });
+      try { reply({ ok: true, data: await this.run(m.ch, m.args || []) }); } catch (e) { reply({ ok: false, error: e.message, screenshot: e.screenshot }); }
+    };
+    ws.on('message', onMsg);
+    for (const raw of early) onMsg(raw);
+  }
+
+  // Runs an action for a phone / other PC (direct or via the relay)
+  async run(ch, args) {
+    if (BLOCKED.has(ch)) throw new Error('Do this on the PC that runs your accounts.');
+    const fn = this.handlers.get(ch);
+    if (!fn) throw new Error('Unknown action');
+    return fn(...args);
   }
 
   async onHttp(req, res) {
     const u = new URL(req.url, 'http://x');
     const p = u.pathname;
-    const send = (code, type, body, extra = {}) => { res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-cache', ...extra }); res.end(body); };
+    const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' };
+    const send = (code, type, body, extra = {}) => { res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-cache', ...cors, ...extra }); res.end(body); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'Access-Control-Max-Age': '86400' }); return res.end(); }
 
     if (p === '/ping') {
-      const d = this.device(u.searchParams.get('t'));
-      return send(200, 'application/json', JSON.stringify({ app: 'switchboard', name: os.hostname(), paired: !!d }), { 'Access-Control-Allow-Origin': '*' });
+      const d = await this.authorize(u.searchParams.get('t'));
+      return send(200, 'application/json', JSON.stringify({ app: 'switchboard', name: os.hostname(), paired: !!d }));
     }
     if (p === '/' || p === '/index.html') {
       let html = fs.readFileSync(path.join(this.root, 'renderer', 'index.html'), 'utf8');
-      html = html.replace('<script src="app.js"></script>', '<script src="/remote-shim.js"></script><script src="/app.js"></script>')
+      html = html.replace('src="vendor/supabase.js"', 'src="/vendor/supabase.js"').replace('src="remote-shim.js"', 'src="/remote-shim.js"').replace('src="app.js"', 'src="/app.js"')
         .replace(/\.\.\/assets\//g, '/assets/')
-        .replace("default-src 'self';", "default-src 'self'; connect-src 'self' ws: wss:;")
+        
         .replace('href="styles.css"', 'href="/styles.css"');
       return send(200, 'text/html; charset=utf-8', html);
     }
@@ -184,7 +210,7 @@ class Remote {
       return send(200, type, fs.readFileSync(path.join(this.root, rel)));
     }
 
-    const d = this.device(u.searchParams.get('t') || req.headers['x-sb-token']);
+    const d = await this.authorize(u.searchParams.get('t') || req.headers['x-sb-token']);
     if (!d) return send(401, 'text/plain', 'Not paired');
 
     if (p.startsWith('/media/')) {
@@ -196,10 +222,10 @@ class Remote {
       if (range) {
         const start = range[1] ? Number(range[1]) : 0;
         const end = range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
-        res.writeHead(206, { 'Content-Type': f.mime, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1 });
+        res.writeHead(206, { ...cors, 'Content-Type': f.mime, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1 });
         return fs.createReadStream(f.file, { start, end }).pipe(res);
       }
-      res.writeHead(200, { 'Content-Type': f.mime, 'Content-Length': size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'max-age=31536000', 'Content-Disposition': `inline; filename="${encodeURIComponent(f.name)}"` });
+      res.writeHead(200, { ...cors, 'Content-Type': f.mime, 'Content-Length': size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'max-age=31536000', 'Content-Disposition': `inline; filename="${encodeURIComponent(f.name)}"` });
       return fs.createReadStream(f.file).pipe(res);
     }
     if (p === '/upload' && req.method === 'POST') {

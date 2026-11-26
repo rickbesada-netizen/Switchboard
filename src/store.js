@@ -29,6 +29,16 @@ class Store extends EventEmitter {
     this.timer = setInterval(() => this.flush(), 1500);
   }
 
+  // Re-read everything from disk (after another PC's data has been restored here)
+  reload() {
+    this.rooms = U.readJSON(this.roomsFile, {});
+    this.msgs = {};
+    this.idx = {};
+    this.reactIdx = {};
+    this.dirtyRooms.clear();
+    this.roomsDirty = false;
+  }
+
   room(id) {
     if (!this.rooms[id]) {
       this.rooms[id] = {

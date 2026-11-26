@@ -26,7 +26,7 @@ One inbox for WhatsApp, Messenger and Instagram on your PC, plus quiet posting t
 
 ## Download
 - **Windows**: https://github.com/rickbesada-netizen/Switchboard/releases/latest/download/Switchboard-Setup.exe. It installs with desktop and Start menu shortcuts, starts with Windows in the tray, and updates itself: new versions download in the background and a "Restart to update" button appears.
-- **Android**: https://github.com/rickbesada-netizen/Switchboard/releases/latest/download/Switchboard.apk. Pair it with the PC under *Settings → Phone → Pair a phone* by scanning the QR code. The phone then shows all your accounts, chats, folders and posting, and gets message notifications. Your accounts keep running on the PC. On the same Wi-Fi it works straight away; away from home, install Tailscale on the PC and the phone. The app tells you when a new version is out.
+- **Android**: https://github.com/rickbesada-netizen/Switchboard/releases/latest/download/Switchboard.apk. Sign in with your Switchboard account and everything is there: accounts, chats, folders and posting, with message notifications. The app tells you when a new version is out.
 
 Windows may show "Windows protected your PC" because the installer isn't code-signed: click *More info → Run anyway*. On Android, allow installing from your browser when asked.
 
@@ -37,6 +37,13 @@ Every push to `main` builds the engine, the Windows installer and the Android ap
 2. Go to **Accounts → Add an account**:
    - **WhatsApp**: scan the QR code with your phone (*Settings → Linked devices → Link a device*).
    - **Messenger / Instagram**: enter the account's proxy (optional), press *Add and log in*, and log in in the window that opens. It closes by itself once you're in. If Trickster is connected (*Settings*), you can pick a Trickster profile instead, or paste exported cookies.
+
+## Your Switchboard account
+Sign in with the same Switchboard account on every PC and phone (*Settings → Switchboard account*). The first time, choose *Create account* on one device; only one account can ever be created, and it's yours.
+- **One PC runs your accounts.** The highest PC on your list (*Settings → Switchboard account → PCs*, reorder with the arrows) that's switched on runs WhatsApp, Messenger and Instagram. When a higher PC (say your laptop) comes online, the other one hands over: it stops its engines, uploads an encrypted copy of everything (chats, logins, settings), and the laptop picks up from there within about a minute. *Run accounts on this PC* forces a handover straight away.
+- **Every other device is a window onto that PC.** On the same network (or Tailscale) it connects straight to it; anywhere else it goes through your private Switchboard relay. If no PC is on, the phone shows "PC offline" until one is.
+- **Encrypted with your password.** Copies uploaded for a handover are encrypted on the PC with a key made from your password, so they can't be read without it. If you forget the password, the online copies can't be recovered (your PC still has its own).
+- Without signing in, Switchboard works exactly as before, on that PC only.
 
 ## How it works
 - Each account runs in its own small built-in engine (`engine.exe`, bundled inside Switchboard). It's built from the open-source mautrix bridge code (WhatsApp, Messenger including encrypted chats, and Instagram) and talks straight to the app. There's no Docker and no server.
@@ -51,6 +58,6 @@ Every push to `main` builds the engine, the Windows installer and the Android ap
 
 ## Good to know
 - These bridges are unofficial logins. Meta can flag them, especially Instagram. Try a spare account first, and give each client account the same proxy it normally uses.
-- WhatsApp uses one of your four linked-device slots. Your phone does not need to stay online.
+- WhatsApp uses one of your four linked-device slots. Your phone does not need to stay online. A handover between PCs keeps the same linked device, so it never asks you to scan again.
 - Logs: *Accounts → Log* shows each account's engine log. App log: `%APPDATA%\Switchboard\data\logs`.
 - *Post quietly to profile* is still rolling out on Instagram's side. If an account doesn't have it, Switchboard stops before sharing, unless you turn on *Post normally if this account doesn't have the quiet option*.

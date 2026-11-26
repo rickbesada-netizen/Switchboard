@@ -27,7 +27,7 @@ const netLabel = (n) => (NETS()[n] || {}).label || n || '';
 function mxc(u, thumb) {
   if (!u || !String(u).startsWith('mxc://')) return null;
   const [s, id] = u.slice(6).split('/');
-  if (REMOTE) return `/media/${encodeURIComponent(s)}/${encodeURIComponent(id)}?t=${encodeURIComponent(window.SB_TOKEN)}`;
+  if (REMOTE) return window.sbMediaUrl ? window.sbMediaUrl(u, thumb) : `/media/${encodeURIComponent(s)}/${encodeURIComponent(id)}?t=${encodeURIComponent(window.SB_TOKEN)}`;
   return `sbmedia://media/${encodeURIComponent(s)}/${encodeURIComponent(id)}${thumb ? '?thumb=1' : ''}`;
 }
 function linkify(t) {
@@ -176,7 +176,7 @@ function showView(v) {
   S.view = v;
   document.body.classList.remove('menu-open');
   if (v !== 'inbox') document.body.classList.remove('chat-open');
-  if (v === 'settings') S.remoteFetched = false;
+  if (v === 'settings') { S.remoteFetched = false; S.cloud = null; }
   const titles = { inbox: 'Chats', post: 'Post', scheduled: 'Scheduled', automation: 'Automation', accounts: 'Accounts', settings: 'Settings', engine: 'Engine' };
   if ($('#mobileTitle')) $('#mobileTitle').textContent = titles[v] || 'Switchboard';
   $('#inboxView').classList.toggle('hidden', v !== 'inbox');
@@ -472,10 +472,16 @@ $('#messages').addEventListener('click', async (e) => {
     return;
   }
   const img = e.target.closest('img.media');
-  if (img) { $('#lightbox').innerHTML = `<img src="${img.dataset.full}">`; $('#lightbox').classList.remove('hidden'); return; }
+  if (img) {
+    const full = img.dataset.full;
+    const show = (u) => { $('#lightbox').innerHTML = `<img src="${u}">`; $('#lightbox').classList.remove('hidden'); };
+    if (full.startsWith('sbrelay:') && window.sbResolveMedia) window.sbResolveMedia(full.slice(8)).then(show).catch(() => show(img.src));
+    else show(full);
+    return;
+  }
   const fileEl = e.target.closest('[data-save]');
   if (fileEl) {
-    if (REMOTE) { window.open(mxc(fileEl.dataset.save), '_blank'); return; }
+    if (REMOTE) { (window.sbResolveMedia ? window.sbResolveMedia(fileEl.dataset.save) : Promise.resolve(mxc(fileEl.dataset.save))).then((u) => window.open(u, '_blank')).catch((er) => toast(er.message, true)); return; }
     call('saveMedia', fileEl.dataset.save, fileEl.dataset.name).catch((er) => toast(er.message, true));
     return;
   }
@@ -901,7 +907,7 @@ function panelAbout() {
   const u = S.update || i.update || {};
   return `<div class="card"><h3>About and updates</h3>
     <div class="row"><span class="grow">Switchboard <b>${esc(i.version || '')}</b>${REMOTE ? ' (on your PC)' : ''}<div class="small">${esc(updateText(u))}</div></span>
-    ${REMOTE ? '' : (u.state === 'ready' ? '<button class="primary" id="installUpd">Restart and update</button>' : '<button class="ghost-btn" id="checkUpd">Check for updates</button>')}</div>
+    ${REMOTE && !NATIVE ? '' : (u.state === 'ready' ? '<button class="primary" id="installUpd">Restart and update</button>' : '<button class="ghost-btn" id="checkUpd">Check for updates</button>')}</div>
     ${REMOTE ? '' : '<div class="small">Switchboard checks for updates on its own every few hours and downloads them in the background.</div>'}</div>`;
 }
 function panelPhone() {
@@ -915,9 +921,48 @@ function panelPhone() {
     ${devs.length ? `<table class="list"><tr><th>Paired phones</th><th>Last seen</th><th></th></tr>${devs.map((d) => `<tr><td>${esc(d.name)} ${d.online ? '<span class="state ok">connected</span>' : ''}</td><td class="small">${d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '-'}</td><td><button class="danger-btn" data-revoke="${esc(d.id)}">Remove</button></td></tr>`).join('')}</table>` : '<div class="small">No phones paired yet.</div>'}
   </div>`;
 }
+// ---- Switchboard account (sign in on every device; which PC runs the accounts)
+const NATIVE = window.sbNative || null;
+async function loadAccount() {
+  try {
+    if (NATIVE) {
+      S.cloud = await NATIVE.call('cloudStatus');
+      S.cloudDevices = S.cloud.signedIn ? await NATIVE.call('cloudDevices') : [];
+    } else if (window.sbAccount) {
+      S.cloud = { signedIn: true, email: await window.sbAccount.email(), role: 'phone' };
+      S.cloudDevices = await window.sbAccount.devices();
+    }
+  } catch (e) { S.cloud = S.cloud || {}; S.cloudErr = e.message; }
+  if (S.view === 'settings') renderPanel();
+}
+function panelAccount() {
+  const c = S.cloud;
+  if (!c) { loadAccount(); return `<div class="card"><h3>Switchboard account</h3><div class="small">Loading...</div></div>`; }
+  if (!c.signedIn) {
+    if (!NATIVE) return '';
+    return `<div class="card"><h3>Switchboard account</h3>
+      <div class="small" style="margin-bottom:10px">Sign in on each of your PCs and on the Android app. Your best PC that's switched on runs your accounts; the others (and your phone) show everything from it, from anywhere. When you sign in on another PC, it receives your accounts and chats from the current one, encrypted with your password.</div>
+      <div class="grid2"><label class="field"><span>Email</span><input id="acEmail" type="email" value="${esc(c.email || '')}"></label><label class="field"><span>Password</span><input id="acPass" type="password"></label></div>
+      <div class="btns"><button class="primary" id="acSignIn">Sign in</button><button class="ghost-btn" id="acCreate">Create my account</button></div>
+      <div class="small" style="margin-top:8px">Only one account can ever be created, so it's yours alone. Keep the password safe: it also unlocks your encrypted backups.</div></div>`;
+  }
+  const devs = S.cloudDevices || [];
+  const pcs = devs.filter((d) => d.kind === 'pc');
+  const phones = devs.filter((d) => d.kind === 'phone');
+  const roleText = { host: 'This PC runs your accounts (host).', viewer: 'Another PC runs your accounts. This PC shows them from there.', phone: '' }[c.role] || '';
+  return `<div class="card"><h3>Switchboard account</h3>
+    <div class="row"><span class="grow">Signed in as <b>${esc(c.email || '')}</b><div class="small">${esc(roleText)}</div></span>
+      ${NATIVE && c.role === 'viewer' ? '<button class="primary" id="acMakeHost">Run accounts on this PC</button>' : ''}
+      <button class="ghost-btn" id="acSignOut">Sign out</button></div>
+    ${pcs.length ? `<div class="small" style="margin:12px 0 4px">PCs, best first. The highest switched-on PC runs your accounts and takes over automatically when it comes online.</div>
+      <div>${pcs.map((d, i) => `<div class="dev-row"><span class="grow"><b>${esc(d.name)}${d.me ? ' (this PC)' : ''}</b><span class="small">${d.host ? '<span class="state ok">running your accounts</span>' : d.online ? '<span class="state wait">on</span>' : '<span class="state">offline</span>'} · last seen ${new Date(d.last_seen).toLocaleString()}</span></span>
+        ${NATIVE ? `<button class="icon-btn mini" data-prio="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''}>↑</button><button class="icon-btn mini" data-prio="${i}" data-dir="1" ${i === pcs.length - 1 ? 'disabled' : ''}>↓</button>${d.me ? '' : `<button class="danger-btn" data-rmdev="${esc(d.id)}">Remove</button>`}` : ''}</div>`).join('')}</div>` : ''}
+    ${phones.length ? `<div class="small" style="margin:12px 0 4px">Phones</div>${phones.map((d) => `<div class="dev-row"><span class="grow"><b>${esc(d.name)}${d.me ? ' (this phone)' : ''}</b><span class="small">last seen ${new Date(d.last_seen).toLocaleString()}</span></span>${NATIVE ? `<button class="danger-btn" data-rmdev="${esc(d.id)}">Remove</button>` : ''}</div>`).join('')}` : ''}
+  </div>`;
+}
 function panelSettings() {
   const s = S.st.settings;
-  if (REMOTE) return `<h1>Settings</h1><div class="sub">Settings are changed in Switchboard on your PC.</div>${panelAbout()}`;
+  if (REMOTE) return `<h1>Settings</h1><div class="sub">Other settings are changed on the PC that runs your accounts.</div>${panelAccount()}${panelAbout()}`;
   const sw = (k, label, sub) => `<div class="row"><label class="switch"><input type="checkbox" data-set="${k}" ${s[k] ? 'checked' : ''}><span></span></label><div class="grow">${label}${sub ? `<div class="small">${sub}</div>` : ''}</div></div>`;
   return `<h1>Settings</h1><div class="sub">Defaults apply to every chat unless you change a chat in its info panel.</div>
     <div class="card"><h3>Privacy</h3>
@@ -925,6 +970,7 @@ function panelSettings() {
       ${sw('hideTyping', 'Hide typing', 'Never show "typing..." to the other person.')}
       ${sw('keepDeleted', 'Keep deleted messages', 'When someone unsends a message, keep your saved copy (shown with a red "Deleted by sender" label).')}
     </div>
+    ${panelAccount()}
     ${panelAbout()}
     ${panelPhone()}
     <div class="card"><h3>App</h3>
@@ -1062,9 +1108,33 @@ $('#panel').addEventListener('click', async (e) => {
       renderPanel();
     }
     if (t.id === 'openData') call('dataFolder');
-    if (t.id === 'checkUpd') { S.update = await call('checkUpdates'); renderPanel(); }
-    if (t.id === 'installUpd') { toast('Restarting to update...'); await call('installUpdate'); }
+    if (t.id === 'checkUpd') { S.update = await (NATIVE ? NATIVE.call('checkUpdates') : call('checkUpdates')); renderPanel(); }
+    if (t.id === 'installUpd') { toast('Restarting to update...'); await (NATIVE ? NATIVE.call('installUpdate') : call('installUpdate')); }
     if (t.id === 'pairPhone') showPairing();
+    if (t.id === 'acSignIn' || t.id === 'acCreate') {
+      const email = $('#acEmail').value.trim();
+      const pass = $('#acPass').value;
+      if (!email || !pass) return toast('Enter your email and password', true);
+      t.disabled = true;
+      toast(t.id === 'acCreate' ? 'Creating your account...' : 'Signing in...');
+      try { S.cloud = await NATIVE.call(t.id === 'acCreate' ? 'cloudCreateAccount' : 'cloudSignIn', email, pass); toast('Signed in'); } finally { t.disabled = false; }
+      S.cloud = null;
+      loadAccount();
+    }
+    if (t.id === 'acSignOut') {
+      if (!confirm('Sign out of Switchboard on this device?')) return;
+      if (NATIVE) { toast('Signing out...'); await NATIVE.call('cloudSignOut'); S.cloud = null; loadAccount(); }
+      else if (window.sbAccount) await window.sbAccount.signOut();
+    }
+    if (t.id === 'acMakeHost') { await NATIVE.call('cloudMakeHost'); toast('Asked the current PC to hand over. This takes about a minute.'); }
+    if (t.dataset.prio !== undefined) {
+      const pcs = (S.cloudDevices || []).filter((d) => d.kind === 'pc');
+      const i = +t.dataset.prio; const j = i + +t.dataset.dir;
+      [pcs[i], pcs[j]] = [pcs[j], pcs[i]];
+      S.cloudDevices = [...(await NATIVE.call('cloudSetPriorities', pcs.map((d) => d.id)))];
+      renderPanel();
+    }
+    if (t.dataset.rmdev) { if (confirm('Remove this device from your account?')) { S.cloudDevices = await NATIVE.call('cloudRemoveDevice', t.dataset.rmdev); renderPanel(); } }
     if (t.dataset.revoke) { S.remote = await call('remoteRevoke', t.dataset.revoke); renderPanel(); toast('Phone removed'); }
     if (t.id === 'savePin') {
       const v = $('#hidePinNew').value.trim();
@@ -1099,13 +1169,13 @@ async function showPairing() {
 function renderUpdatePill() {
   const el = $('#updatePill');
   const u = S.update || {};
-  if (REMOTE || !['downloading', 'ready'].includes(u.state)) return el.classList.add('hidden');
+  if ((REMOTE && !NATIVE) || !['downloading', 'ready'].includes(u.state)) return el.classList.add('hidden');
   el.classList.remove('hidden');
   el.classList.toggle('ready', u.state === 'ready');
   el.textContent = u.state === 'ready' ? `⬆ Update ${u.version} ready · Restart` : `⬇ Downloading update${u.percent ? ' ' + u.percent + '%' : ''}...`;
 }
 $('#updatePill').addEventListener('click', async () => {
-  if ((S.update || {}).state === 'ready') { toast('Restarting to update...'); await call('installUpdate').catch((e) => toast(e.message, true)); }
+  if ((S.update || {}).state === 'ready') { toast('Restarting to update...'); await (NATIVE ? NATIVE.call('installUpdate') : call('installUpdate')).catch((e) => toast(e.message, true)); }
   else showView('settings');
 });
 window.sb.on('remote-info', (r) => { S.remote = r; S.st.settings.phoneAccess = r.enabled; if (S.view === 'settings') renderPanel(); });
@@ -1254,7 +1324,8 @@ window.addEventListener('focus', () => { if (S.current && S.view === 'inbox') ca
 
 (async function start() {
   await refreshState();
-  try { S.appInfo = await call('appInfo'); S.update = S.appInfo.update; renderUpdatePill(); } catch {}
+  try { S.appInfo = await (NATIVE ? NATIVE.call('appInfo') : call('appInfo')); S.update = S.appInfo.update; renderUpdatePill(); } catch {}
+  if (NATIVE) NATIVE.on('update', (u) => { S.update = u; renderUpdatePill(); });
   const hm = /room=([^&]+)/.exec(location.hash);
   if (hm) { showView('inbox'); openRoom(decodeURIComponent(hm[1])); history.replaceState(null, '', location.pathname); return; }
   showView((S.st.accounts || []).length ? 'inbox' : 'accounts');

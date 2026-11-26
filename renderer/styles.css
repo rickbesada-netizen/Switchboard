@@ -262,3 +262,18 @@ table.list th { color: var(--dim); font-weight: 500; font-size: 12px; border-top
 }
 
 .card a, .modal-card a, .small a { color: var(--accent2); }
+
+/* sign-in / connecting overlay (phone app, second PC) */
+#sbOverlay { position: fixed; inset: 0; z-index: 150; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.sbo-card { width: 100%; max-width: 380px; text-align: center; }
+.sbo-card img { width: 64px; height: 64px; margin-bottom: 8px; }
+.sbo-card h2 { margin: 6px 0; }
+.sbo-sub { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
+.sbo-card input { width: 100%; margin-bottom: 10px; padding: 12px; font-size: 15px; }
+.sbo-card .primary { width: 100%; padding: 12px; font-size: 15px; }
+.sbo-err { color: var(--danger); font-size: 13px; min-height: 18px; }
+.spin { width: 28px; height: 28px; border: 3px solid var(--bg4); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; margin: 16px auto; }
+.dev-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }
+.dev-row:first-child { border-top: 0; }
+.dev-row .grow b { display: block; }
+.mini { width: 28px; height: 28px; font-size: 13px; }

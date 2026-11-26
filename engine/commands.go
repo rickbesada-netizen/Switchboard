@@ -315,6 +315,18 @@ func handleCommand(ctx context.Context, cmd string, rawArgs json.RawMessage) (an
 		}
 		return map[string]any{"path": mx.mediaPath(mid)}, nil
 
+	case "backup":
+		// Consistent copy of the account database while it keeps running (for cloud snapshots)
+		path := str("path")
+		if path == "" {
+			return nil, errors.New("missing path")
+		}
+		_ = os.Remove(path)
+		if _, err := br.DB.Exec(ctx, "VACUUM INTO ?", path); err != nil {
+			return nil, err
+		}
+		return map[string]any{"path": path}, nil
+
 	case "ghost_id":
 		return mx.FormatGhostMXID(networkid.UserID(str("remote_id"))), nil
 	}

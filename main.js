@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol, Notification, shell, Tray, Menu, nativeImage, session, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol, Notification, shell, Tray, Menu, nativeImage, session, net, safeStorage } = require('electron');
 const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
@@ -10,7 +10,8 @@ const { Engine } = require('./src/engine');
 const { parseCookieText, fillCookieFields } = require('./src/bridges');
 const trickster = require('./src/trickster');
 const social = require('./src/social');
-const { Remote } = require('./src/remote');
+const { Remote, lanAddresses } = require('./src/remote');
+const { Cloud } = require('./src/cloud');
 const os = require('os');
 
 protocol.registerSchemesAsPrivileged([
@@ -37,9 +38,13 @@ const ICON = path.join(__dirname, 'assets', 'icon.png');
 
 const handlers = new Map(); // every action, shared by the desktop window and paired phones
 let remote = null;
+let cloud = null;
+let role = null; // 'standalone' | 'host' | 'viewer' (null while deciding)
+const isViewer = () => role === 'viewer';
 function send(ch, ...args) {
-  if (win && !win.isDestroyed()) win.webContents.send(ch, ...args);
+  if (win && !win.isDestroyed() && !isViewer()) win.webContents.send(ch, ...args);
   if (remote) remote.broadcast(ch, args);
+  if (cloud && role === 'host') cloud.relayEvent(ch, args);
 }
 function log(msg) {
   send('log', msg);
@@ -281,7 +286,10 @@ function notify(r, m) {
   const title = `${roomName(r)}${acc ? ' · ' + NETWORKS[acc.network].label : ''}`;
   const body = (r.members[m.sender] && others(r).length > 1 ? memberName(r, m.sender) + ': ' : '') + preview(m);
   const pcActive = win && win.isVisible() && win.isFocused();
-  if (remote && cfg.settings.phoneNotifications !== false && !pcActive) remote.broadcast('notify', [{ title, body, roomId: r.id }]);
+  if (cfg.settings.phoneNotifications !== false && !pcActive) {
+    if (remote) remote.broadcast('notify', [{ title, body, roomId: r.id }]);
+    if (cloud && role === 'host') cloud.relayEvent('notify', [{ title, body, roomId: r.id }]);
+  }
   if (win && win.isFocused() && focusedRoom === r.id) return;
   if (!cfg.settings.notifications || !Notification.isSupported()) return;
   const n = new Notification({
@@ -512,7 +520,7 @@ async function runScheduled(item) {
 function startScheduler() {
   let busy = false;
   setInterval(async () => {
-    if (busy) return;
+    if (busy || isViewer() || !role) return;
     const due = cfg.schedule.filter((s) => s.status === 'pending' && s.at <= Date.now());
     if (!due.length) return;
     busy = true;
@@ -551,7 +559,7 @@ function createWindow(hidden) {
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false },
   });
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  loadUI();
   win.on('close', (e) => {
     if (!quitting && cfg.settings.minimizeToTray) { e.preventDefault(); win.hide(); }
   });
@@ -560,6 +568,102 @@ function createWindow(hidden) {
   });
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
 }
+// The window shows this PC's own accounts (host) or connects to the host PC (viewer)
+function loadUI() {
+  if (!win || win.isDestroyed()) return;
+  const q = isViewer() ? { mode: 'viewer' } : role === null && cloud && cloud.signedIn ? { mode: 'deciding' } : {};
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html'), { query: q });
+}
+async function enterRole(r) {
+  const prev = role;
+  if (r === 'standalone') r = 'host';
+  role = r;
+  log(r === 'host' ? (cloud && cloud.signedIn ? 'This PC is the host: it runs your accounts.' : 'Running your accounts on this PC.') : 'Another PC runs your accounts. This PC shows them from there.');
+  if (r === 'host') {
+    store.reload();
+    if (cloud && cloud.signedIn && !remote.running) remote.start(); // so phones and other PCs can connect directly
+    await boot();
+  } else {
+    await engine.stopAll().catch(() => {});
+    engineStatus = 'stopped';
+  }
+  if (prev !== r) loadUI();
+}
+// Everything a phone / other PC can run, via direct connection or the relay
+async function handleRemote(ch, args) {
+  if (ch === 'relayMedia') {
+    const f = engine.mediaFile(args[0]);
+    if (!f) throw new Error('File not found on the host PC');
+    return cloud.relayMedia(f, args[0].split('/').pop());
+  }
+  if (ch === 'relayFetchUpload') return cloud.relayFetchUpload(args[0]);
+  return remote.run(ch, args);
+}
+const LOCAL_SETTINGS = ['phoneAccess', 'startWithWindows', 'remotePort', 'minimizeToTray', 'notifications'];
+async function allBrowserCookies() {
+  const out = {};
+  for (const a of cfg.accounts) {
+    if (a.network === 'whatsapp') continue;
+    try { out[a.id] = await session.fromPartition('persist:acc-' + a.id).cookies.get({}); } catch {}
+  }
+  return out;
+}
+async function restoreBrowserCookies(map) {
+  for (const [id, list] of Object.entries(map || {})) {
+    const ses = session.fromPartition('persist:acc-' + id);
+    for (const c of list) {
+      try {
+        await ses.cookies.set({
+          url: `https://${String(c.domain).replace(/^\./, '')}${c.path || '/'}`,
+          name: c.name, value: c.value, domain: c.domain, path: c.path, secure: c.secure, httpOnly: c.httpOnly,
+          expirationDate: c.expirationDate, sameSite: c.sameSite,
+        });
+      } catch {}
+    }
+  }
+}
+function setupCloud() {
+  cloud = new Cloud({
+    cfg, log, safe: safeStorage, version: app.getVersion(),
+    hooks: {
+      addresses: () => (remote && remote.running ? lanAddresses(remote.port).map((a) => a.url) : []),
+      prepareHandoff: async () => { await engine.stopAll(); store.flush(); cfg.save(true); },
+      isDirty: () => true,
+      engineBackups: async () => {
+        const out = [];
+        fs.mkdirSync(U.p('backup-tmp'), { recursive: true });
+        for (const a of cfg.accounts) {
+          const dbPath = U.p('backup-tmp', a.id + '.db');
+          try { await engine.call(a.id, 'backup', { path: dbPath }, 120000); out.push({ id: a.id, dbPath }); } catch (e) { log(`Backup of ${a.label} skipped: ${e.message}`); }
+        }
+        return out;
+      },
+      collectState: async () => {
+        store.flush();
+        const settings = { ...cfg.settings };
+        for (const k of LOCAL_SETTINGS) delete settings[k];
+        return {
+          cfg: { accounts: cfg.accounts, counters: cfg.counters, tags: cfg.tags, quickReplies: cfg.quickReplies, autoReplies: cfg.autoReplies, schedule: cfg.schedule, settings, matrix: { user: cfg.matrix.user }, foldersV2: cfg.foldersV2 },
+          cookies: await allBrowserCookies(),
+        };
+      },
+      applyState: async (st) => {
+        const c = st.cfg || {};
+        for (const k of ['accounts', 'counters', 'tags', 'quickReplies', 'autoReplies', 'schedule', 'foldersV2']) if (k in c) cfg[k] = c[k];
+        const keep = {};
+        for (const k of LOCAL_SETTINGS) keep[k] = cfg.settings[k];
+        cfg.settings = { ...cfg.settings, ...(c.settings || {}), ...keep };
+        cfg.save(true);
+        await restoreBrowserCookies(st.cookies);
+        store.reload();
+      },
+      handleRemote,
+    },
+  });
+  cloud.on('role', (r) => enterRole(r).catch((e) => log('Role change failed: ' + e.message)));
+  cloud.on('auth', (st) => { if (win && !win.isDestroyed()) win.webContents.send('cloud', st); });
+}
+
 function createTray() {
   tray = new Tray(nativeImage.createFromPath(ICON).resize({ width: 16, height: 16 }));
   tray.setToolTip('Switchboard');
@@ -629,6 +733,15 @@ function setupIpc() {
     return true;
   });
   handle('remoteInfo', () => remote.info());
+  handle('cloudStatus', () => cloud.status());
+  handle('cloudSignIn', async (email, password) => { const st = await cloud.signIn(email, password); return st; });
+  handle('cloudCreateAccount', (email, password) => cloud.createAccount(email, password));
+  handle('cloudSignOut', async () => { await cloud.signOut(); await enterRole('host'); return cloud.status(); });
+  handle('cloudDevices', () => cloud.devices());
+  handle('cloudSetPriorities', (order) => cloud.setPriorities(order));
+  handle('cloudRemoveDevice', (id) => cloud.removeDevice(id));
+  handle('cloudMakeHost', () => cloud.makeHost());
+  handle('viewerSession', async () => { const { data } = await cloud.sb.auth.getSession(); return data.session ? { access_token: data.session.access_token, refresh_token: data.session.refresh_token } : null; });
   handle('remoteEnable', (on) => {
     cfg.settings.phoneAccess = !!on;
     cfg.save(true);
@@ -958,15 +1071,25 @@ app.whenReady().then(async () => {
     return new Response(r.body, { status: 200, headers: { 'Content-Type': f.mime, 'Cache-Control': 'max-age=31536000' } });
   });
 
+  setupCloud();
   setupIpc();
   createWindow(process.argv.includes('--hidden'));
   createTray();
   applyLoginItem();
   setupUpdater();
-  remote = new Remote({ cfg, handlers, mediaFile: (mxc) => engine.mediaFile(mxc), log, root: __dirname, onChange: () => { if (win && !win.isDestroyed()) win.webContents.send('remote-info', remote.info()); } });
+  remote = new Remote({ cfg, handlers, mediaFile: (mxc) => engine.mediaFile(mxc), log, root: __dirname, cloud, onChange: () => { if (win && !win.isDestroyed()) win.webContents.send('remote-info', remote.info()); } });
   if (cfg.settings.phoneAccess) remote.start();
   startScheduler();
-  setInterval(() => { for (const a of cfg.accounts) refreshAccount(a).catch(() => {}); }, 120000);
+  setInterval(() => { if (role === 'host') for (const a of cfg.accounts) refreshAccount(a).catch(() => {}); }, 120000);
 
-  boot().catch((e) => log('Start failed: ' + e.message));
+  if (await cloud.init()) {
+    // Signed in: the account decides which PC runs the accounts. Wait for that before starting them.
+    if (!remote.running) remote.start();
+    cloud.start();
+    setTimeout(() => {
+      if (role === null) { log('Could not reach Switchboard online; running accounts here for now.'); enterRole(cfg.cloud.lastRole === 'viewer' ? 'viewer' : 'host'); }
+    }, 20000);
+  } else {
+    enterRole('standalone').catch((e) => log('Start failed: ' + e.message));
+  }
 });

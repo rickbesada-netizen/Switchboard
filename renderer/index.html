@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' sbmedia: data:; media-src 'self' sbmedia:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src * ws: wss:; img-src 'self' sbmedia: data: blob: http: https:; media-src 'self' sbmedia: blob: http: https:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>Switchboard</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -73,6 +73,8 @@
   <div id="ctxMenu" class="hidden"></div>
   <div id="lightbox" class="hidden"></div>
 
+  <script src="vendor/supabase.js"></script>
+  <script src="remote-shim.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

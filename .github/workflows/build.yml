@@ -130,6 +130,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
+      - name: Bundle the Switchboard screens into the app
+        run: |
+          mkdir -p android/app/src/main/assets/ui android/app/src/main/assets/assets
+          cp -r renderer/. android/app/src/main/assets/ui/
+          cp assets/icon.png android/app/src/main/assets/assets/
       - name: Build APK
         working-directory: android
         run: gradle assembleRelease --no-daemon -PversionName=2.1.${{ github.run_number }} -PversionCode=${{ github.run_number }}
