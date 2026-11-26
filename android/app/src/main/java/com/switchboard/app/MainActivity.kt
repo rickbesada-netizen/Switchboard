@@ -112,9 +112,8 @@ class MainActivity : AppCompatActivity() {
         root.setBackgroundColor(Color.parseColor("#12151c"))
         root.addView(web, android.widget.FrameLayout.LayoutParams(-1, -1))
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
-            val t = androidx.core.view.WindowInsetsCompat.Type
-            val bars = insets.getInsets(t.systemBars() or t.displayCutout())
-            val ime = insets.getInsets(t.ime())
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
             v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
             androidx.core.view.WindowInsetsCompat.CONSUMED
         }
