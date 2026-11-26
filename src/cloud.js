@@ -104,7 +104,7 @@ class Cloud extends EventEmitter {
     return this.signIn(email, password);
   }
 
-  async signIn(email, password) {
+  async signIn(email, password, opts = {}) {
     const { data, error } = await this.sb.auth.signInWithPassword({ email: String(email).trim(), password });
     if (error) throw new Error(error.message === 'Invalid login credentials' ? 'Wrong email or password.' : error.message);
     this.user = data.user;
@@ -112,7 +112,7 @@ class Cloud extends EventEmitter {
     this.cfg.cloud.email = data.user.email;
     this.cfg.save(true);
     await this.ensureDevice();
-    this.start();
+    if (opts.start !== false) this.start();
     return this.status();
   }
 
@@ -136,8 +136,13 @@ class Cloud extends EventEmitter {
       if (data) return;
     }
     const { data: pcs } = await this.sb.from('devices').select('priority').eq('kind', 'pc');
-    const prio = ((pcs || []).reduce((m, d) => Math.max(m, d.priority), 0) || 0) + 10;
-    const { data, error } = await this.sb.from('devices').insert({ name: os.hostname(), kind: 'pc', priority: prio, version: this.version }).select().single();
+    const server = !!process.env.SB_SERVER;
+    // A server is on all the time, so it goes to the top of the list and runs the accounts
+    const prio = server
+      ? (pcs || []).reduce((m, d) => Math.min(m, d.priority), 10) - 10
+      : ((pcs || []).reduce((m, d) => Math.max(m, d.priority), 0) || 0) + 10;
+    const name = server ? 'Switchboard server' : os.hostname();
+    const { data, error } = await this.sb.from('devices').insert({ name, kind: 'pc', priority: prio, version: this.version }).select().single();
     if (error) throw new Error(error.message);
     this.cfg.cloud.deviceId = data.id;
     this.cfg.save(true);

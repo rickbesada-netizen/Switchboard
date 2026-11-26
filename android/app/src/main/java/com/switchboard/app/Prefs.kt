@@ -74,6 +74,9 @@ object Prefs {
         val h = hs.getJSONObject(0)
         val dev = h.optString("host_device", "")
         if (dev.isEmpty() || h.isNull("host_device")) return null
+        // the host renews its lease every 20s; an expired lease means it's switched off
+        val lease = try { java.time.OffsetDateTime.parse(h.optString("lease_until").replace(" ", "T")).toInstant().toEpochMilli() } catch (_: Exception) { 0L }
+        if (lease < System.currentTimeMillis()) return null
         val devs = JSONArray(get("devices?select=id,name,addresses&id=eq.$dev") ?: return null)
         if (devs.length() == 0) return null
         val d = devs.getJSONObject(0)

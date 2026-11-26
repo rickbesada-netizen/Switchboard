@@ -50,7 +50,8 @@ async function withPage(cfg, acc, opts, log, fn) {
       }
       log('Opening a browser with this account\'s login and proxy...');
       const proxy = parseProxy(acc.proxy);
-      try { browser = await chromium.launch({ channel: 'chrome', headless: false, proxy }); } catch { browser = await chromium.launch({ channel: 'msedge', headless: false, proxy }); }
+      if (process.env.SB_SERVER) browser = await chromium.launch({ headless: true, proxy }); // server: Playwright's own Chromium
+      else try { browser = await chromium.launch({ channel: 'chrome', headless: false, proxy }); } catch { browser = await chromium.launch({ channel: 'msedge', headless: false, proxy }); }
       launched = true;
       const ctxOpts = opts.mobile ? { ...PHONE } : { viewport: { width: 1280, height: 900 } };
       const ctx = await browser.newContext(ctxOpts);

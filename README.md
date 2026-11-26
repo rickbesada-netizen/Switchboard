@@ -45,6 +45,16 @@ Sign in with the same Switchboard account on every PC and phone (*Settings → S
 - **Encrypted with your password.** Copies uploaded for a handover are encrypted on the PC with a key made from your password, so they can't be read without it. If you forget the password, the online copies can't be recovered (your PC still has its own).
 - Without signing in, Switchboard works exactly as before, on that PC only.
 
+## Run it 24/7 on a free server
+So your accounts stay connected when your PCs are off, run Switchboard on a free Oracle Cloud server (Always Free, Ubuntu, Ampere/Arm, 2 cores and 12 GB):
+1. Create the server (Ubuntu image, Ampere shape), then connect to it with SSH.
+2. Run `curl -fsSL https://github.com/rickbesada-netizen/Switchboard/releases/latest/download/install-server.sh | sudo bash` and sign in with your Switchboard account when asked.
+3. It goes to the top of your PC list, so it takes over your accounts from whichever PC has them (encrypted handover, same as between PCs). Your PCs and phone connect to it through your private relay.
+
+It updates itself every night. Logs: `journalctl -u switchboard -f`. Sign in again: `sudo switchboard-signin`.
+- To add a Messenger or Instagram account (which needs a login window), paste its cookies, or press *Run accounts on this PC* on your laptop, add it there, and the server takes everything back afterwards. WhatsApp QR codes work from any device.
+- Meta is more suspicious of logins from data-centre addresses, so give every account a proxy (WhatsApp included).
+
 ## How it works
 - Each account runs in its own small built-in engine (`engine.exe`, bundled inside Switchboard). It's built from the open-source mautrix bridge code (WhatsApp, Messenger including encrypted chats, and Instagram) and talks straight to the app. There's no Docker and no server.
 - Each engine uses that account's proxy, so client accounts never share an IP.

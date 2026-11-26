@@ -48,6 +48,7 @@ function send(ch, ...args) {
 }
 function log(msg) {
   send('log', msg);
+  if (process.env.SB_SERVER) console.log(msg);
   try { fs.appendFileSync(U.p('logs', 'switchboard.log'), `[${new Date().toISOString()}] ${msg}\n`); } catch {}
 }
 
@@ -626,7 +627,9 @@ function setupCloud() {
   cloud = new Cloud({
     cfg, log, safe: safeStorage, version: app.getVersion(),
     hooks: {
-      addresses: () => (remote && remote.running ? lanAddresses(remote.port).map((a) => a.url) : []),
+      // A server's own network addresses aren't reachable from your devices: they use the relay
+      // (or SB_PUBLIC_URL if you've opened the port yourself)
+      addresses: () => (process.env.SB_SERVER ? (process.env.SB_PUBLIC_URL ? [process.env.SB_PUBLIC_URL] : []) : remote && remote.running ? lanAddresses(remote.port).map((a) => a.url) : []),
       prepareHandoff: async () => { await engine.stopAll(); store.flush(); cfg.save(true); },
       isDirty: () => true,
       engineBackups: async () => {

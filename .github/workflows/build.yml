@@ -17,7 +17,7 @@ jobs:
           go-version: stable
           cache: false
       - name: Install Windows C compiler
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64 libc6-dev >/dev/null
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64 libc6-dev gcc-aarch64-linux-gnu libc6-dev-arm64-cross >/dev/null
       - name: Resolve dependencies
         working-directory: engine
         env:
@@ -65,6 +65,20 @@ jobs:
             echo
             tail -5 /tmp/sbtest/$net.log
           done
+      - name: Build engine (Linux servers, x64 and Arm)
+        working-directory: engine
+        env:
+          GOTOOLCHAIN: auto
+          CGO_ENABLED: "1"
+        run: |
+          mkdir -p linux
+          go build -trimpath -ldflags "-s -w" -o linux/engine-amd64 .
+          GOARCH=arm64 CC=aarch64-linux-gnu-gcc go build -trimpath -ldflags "-s -w" -o linux/engine-arm64 .
+          file linux/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-linux
+          path: engine/linux/*
       - uses: actions/upload-artifact@v4
         with:
           name: engine
@@ -148,9 +162,47 @@ jobs:
           name: android
           path: out/Switchboard.apk
 
+  server:
+    needs: engine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-linux
+          path: enginelinux
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Package the server
+        run: |
+          npm version 2.1.${{ github.run_number }} --no-git-tag-version --allow-same-version
+          npm ci --omit=dev --no-audit --no-fund
+          mkdir out
+          for a in amd64 arm64; do
+            d=/tmp/pkg/switchboard-server
+            rm -rf /tmp/pkg && mkdir -p $d/engine/bin
+            cp -r main.js package.json src renderer server assets node_modules $d/
+            cp enginelinux/engine-$a $d/engine/bin/engine && chmod +x $d/engine/bin/engine
+            tar -czf out/switchboard-server-linux-$a.tar.gz -C /tmp/pkg switchboard-server
+          done
+          cp server/install.sh out/install-server.sh
+          ls -la out
+      - name: Smoke test (starts with no screen)
+        run: |
+          mkdir /tmp/t && tar -xzf out/switchboard-server-linux-amd64.tar.gz -C /tmp/t
+          SB_HOME=/tmp/t/home timeout 20 node /tmp/t/switchboard-server/server/index.js || true
+          cat /tmp/t/home/data/logs/switchboard.log
+          grep -q "Running your accounts" /tmp/t/home/data/logs/switchboard.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server
+          path: out/*
+
   release:
     if: github.ref == 'refs/heads/main'
-    needs: [app, android]
+    needs: [app, android, server]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -160,6 +212,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: android
+          path: out
+      - uses: actions/download-artifact@v4
+        with:
+          name: server
           path: out
       - run: ls -la out
       - name: Publish as latest release
@@ -171,4 +227,5 @@ jobs:
           body: |
             Windows: https://github.com/${{ github.repository }}/releases/latest/download/Switchboard-Setup.exe
             Android: https://github.com/${{ github.repository }}/releases/latest/download/Switchboard.apk
+            Server (Ubuntu): curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install-server.sh | sudo bash
           files: out/*
