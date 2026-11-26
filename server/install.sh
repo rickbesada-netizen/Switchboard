@@ -15,6 +15,13 @@ current=$(node -p "require('/opt/switchboard/package.json').version" 2>/dev/null
 if [ "$MODE" = update ] && [ "$latest" = "$current" ]; then exit 0; fi
 echo "== Switchboard server $latest ($ARCH)"
 
+# small servers (e.g. Oracle's free 1 GB AMD VM) get a swap file so the engines and the browser fit
+if [ "$(awk '/MemTotal/{print $2}' /proc/meminfo)" -lt 3000000 ] && ! swapon --show | grep -q /swapfile; then
+  echo "== Adding a 2 GB swap file (small server)"
+  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
+  grep -q /swapfile /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
 if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 20 ]; then
   echo "== Installing Node.js"
   apt-get update -qq
