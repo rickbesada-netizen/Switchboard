@@ -74,10 +74,10 @@ systemctl start switchboard
 SIGN
 chmod +x /usr/local/bin/switchboard-signin
 
-# check for a new version every night
+# check for a new version every hour
 cp /opt/switchboard/server/install.sh /usr/local/bin/switchboard-install && chmod +x /usr/local/bin/switchboard-install
 cat > /etc/cron.d/switchboard-update <<'CRON'
-17 4 * * * root /usr/local/bin/switchboard-install update >> /var/log/switchboard-update.log 2>&1
+17 * * * * root /usr/local/bin/switchboard-install update >> /var/log/switchboard-update.log 2>&1
 CRON
 
 systemctl daemon-reload

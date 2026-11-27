@@ -51,7 +51,7 @@ So your accounts stay connected when your PCs are off, run Switchboard on a free
 2. Run `curl -fsSL https://github.com/rickbesada-netizen/Switchboard/releases/latest/download/install-server.sh | sudo bash` and sign in with your Switchboard account when asked.
 3. It goes to the top of your PC list, so it takes over your accounts from whichever PC has them (encrypted handover, same as between PCs). Your PCs and phone connect to it through your private relay.
 
-It updates itself every night. Logs: `journalctl -u switchboard -f`. Sign in again: `sudo switchboard-signin`.
+It checks for a new version every hour and updates itself. Logs: `journalctl -u switchboard -f`. Sign in again: `sudo switchboard-signin`.
 - To add a Messenger or Instagram account (which needs a login window), paste its cookies, or press *Run accounts on this PC* on your laptop, add it there, and the server takes everything back afterwards. WhatsApp QR codes work from any device.
 - Meta is more suspicious of logins from data-centre addresses, so give every account a proxy (WhatsApp included).
 
