@@ -77,7 +77,19 @@
   window.sb = {
     call: (ch, ...args) => new Promise((resolve, reject) => {
       const id = nextId++;
-      const timer = setTimeout(() => { if (pending.has(id)) { pending.delete(id); reject(new Error('Your PC did not answer in time')); } }, ch === 'socialPost' || ch === 'sendFilePaths' ? 600000 : 90000);
+      const long = ch === 'socialPost' || ch === 'sendFilePaths';
+      const timer = setTimeout(() => {
+        if (!pending.has(id)) return;
+        pending.delete(id);
+        reject(new Error('Your PC did not answer in time'));
+        // through the relay, no answer usually means the link went stale: reconnect
+        if (!long && transport && transport.kind === 'relay') {
+          if (relayChan) { try { SB.removeChannel(relayChan); } catch {} relayChan = null; }
+          dropTransport();
+          banner('Reconnecting to your PC...');
+          setTimeout(() => { starting = false; start(); }, 1000);
+        }
+      }, long ? 600000 : transport && transport.kind === 'relay' ? 30000 : 90000);
       pending.set(id, { resolve, reject, timer });
       const msg = { id, ch, args };
       if (transport) transport.send(msg);

@@ -412,7 +412,15 @@ class Cloud extends EventEmitter {
 
   // ------------------------------------------------------------ relay (host side)
   ensureRelay() {
-    if (this.relay || this.role !== 'host' || !this.user) return;
+    if (this.role !== 'host' || !this.user) return;
+    // A relay that dropped (expired sign-in, network blip) and didn't rejoin gets rebuilt
+    if (this.relay && this.relay.state !== 'joined' && Date.now() - this.relayStarted > 30000) {
+      this.log('Relay was disconnected; reconnecting.');
+      this.stopRelay();
+    }
+    if (this.relay) return;
+    this.relayStarted = Date.now();
+    this.sb.auth.getSession().then(({ data }) => { if (data && data.session) this.sb.realtime.setAuth(data.session.access_token); }).catch(() => {});
     const ch = this.sb.channel('sb:' + this.user.id, { config: { private: true, broadcast: { self: false }, presence: { key: 'host-' + this.deviceId } } });
     const parts = new Map();
     ch.on('broadcast', { event: 'rpc' }, ({ payload }) => this.onRelayRpc(ch, payload, parts));
@@ -422,7 +430,10 @@ class Cloud extends EventEmitter {
     });
     ch.subscribe(async (status) => {
       if (status === 'SUBSCRIBED') { await ch.track({ role: 'host', device: this.deviceId }); this.log('Relay ready: phones can reach this PC from anywhere.'); }
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') this.log('Relay connection problem (' + status + '), retrying.');
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        this.log('Relay connection problem (' + status + '), reconnecting.');
+        if (this.relay === ch) { this.stopRelay(); setTimeout(() => this.ensureRelay(), 5000); }
+      }
     });
     this.relay = ch;
   }

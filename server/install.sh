@@ -22,11 +22,11 @@ if [ "$(awk '/MemTotal/{print $2}' /proc/meminfo)" -lt 3000000 ] && ! swapon --s
   grep -q /swapfile /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 20 ]; then
+if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
   echo "== Installing Node.js"
   apt-get update -qq
   apt-get install -y -qq ca-certificates curl gnupg >/dev/null
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
   apt-get install -y -qq nodejs >/dev/null
 fi
 id switchboard >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/switchboard --shell /usr/sbin/nologin switchboard

@@ -109,7 +109,7 @@ jobs:
         run: ls -la engine/bin
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - name: Install
         run: npm ci --no-audit --no-fund
@@ -173,7 +173,7 @@ jobs:
           path: enginelinux
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - name: Package the server
         run: |
