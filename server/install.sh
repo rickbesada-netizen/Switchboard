@@ -4,6 +4,10 @@
 #   Sign in again:  sudo switchboard-signin
 #   Logs:     journalctl -u switchboard -f
 set -euo pipefail
+
+# Everything runs inside main(), so bash has read the whole script before it starts:
+# the updater replaces this file while it runs.
+main() {
 REPO=rickbesada-netizen/Switchboard
 MODE=${1:-install}
 [ "$(id -u)" = 0 ] || { echo "Please run this with sudo."; exit 1; }
@@ -36,6 +40,7 @@ tmp=$(mktemp -d)
 curl -fsSL -o "$tmp/sb.tgz" "https://github.com/$REPO/releases/latest/download/switchboard-server-linux-$ARCH.tar.gz"
 mkdir -p "$tmp/x" && tar -xzf "$tmp/sb.tgz" -C "$tmp/x" --strip-components=1
 systemctl stop switchboard 2>/dev/null || true
+trap 'systemctl start switchboard 2>/dev/null || true' EXIT
 rm -rf /opt/switchboard && mv "$tmp/x" /opt/switchboard && rm -rf "$tmp"
 chmod +x /opt/switchboard/engine/bin/engine
 
@@ -78,6 +83,7 @@ chmod +x /usr/local/bin/switchboard-signin
 cp /opt/switchboard/server/install.sh /usr/local/bin/switchboard-install && chmod +x /usr/local/bin/switchboard-install
 cat > /etc/cron.d/switchboard-update <<'CRON'
 17 * * * * root /usr/local/bin/switchboard-install update >> /var/log/switchboard-update.log 2>&1
+*/5 * * * * root systemctl is-active --quiet switchboard || systemctl start switchboard
 CRON
 
 systemctl daemon-reload
@@ -91,3 +97,6 @@ systemctl restart switchboard
 echo
 echo "Done. Switchboard is running and starts by itself whenever the server restarts."
 echo "Logs: journalctl -u switchboard -f"
+}
+main "$@"
+exit $?

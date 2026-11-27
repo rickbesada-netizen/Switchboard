@@ -142,6 +142,13 @@ class Cloud extends EventEmitter {
       ? (pcs || []).reduce((m, d) => Math.min(m, d.priority), 10) - 10
       : ((pcs || []).reduce((m, d) => Math.max(m, d.priority), 0) || 0) + 10;
     const name = server ? 'Switchboard server' : os.hostname();
+    // the same PC signing in again (reinstall, lost settings) keeps its place instead of being added twice
+    const { data: same } = await this.sb.from('devices').select('id').eq('kind', 'pc').eq('name', name).order('last_seen', { ascending: false }).limit(1);
+    if (same && same.length) {
+      this.cfg.cloud.deviceId = same[0].id;
+      this.cfg.save(true);
+      return;
+    }
     const { data, error } = await this.sb.from('devices').insert({ name, kind: 'pc', priority: prio, version: this.version }).select().single();
     if (error) throw new Error(error.message);
     this.cfg.cloud.deviceId = data.id;
